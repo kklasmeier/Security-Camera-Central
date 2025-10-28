@@ -1,0 +1,15 @@
+# Web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Database
+sqlalchemy==2.0.23
+pymysql==1.1.0
+cryptography==41.0.7  # Required by pymysql for secure connections
+
+# Data validation
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Utilities
+python-dotenv==1.0.0  # Load .env filerequests==2.31.0
