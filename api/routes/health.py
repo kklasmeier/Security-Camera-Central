@@ -1,17 +1,12 @@
 """
-Health Check Endpoint
-Provides API status and database connectivity check
+Health check endpoint
 """
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import text
-from datetime import datetime
-import logging
+from datetime import datetime, timezone
 
-from api.database import get_db
+from api.database import get_db, check_database_connection
 from api.schemas import HealthResponse
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -19,35 +14,19 @@ router = APIRouter()
 @router.get("/health", response_model=HealthResponse)
 def health_check(db: Session = Depends(get_db)):
     """
-    Health check endpoint.
+    Health check endpoint - returns API status and database connection status
     
     Returns:
-        - status: "healthy" or "unhealthy"
-        - database_connected: True if DB connection works
+        - status: "healthy" if API is running
         - timestamp: Current server time
-        - version: API version
-    
-    This endpoint can be used for:
-    - Monitoring/alerting systems
-    - Load balancer health checks
-    - Debugging connectivity issues
+        - database: "connected" or "disconnected"
     """
-    database_connected = False
-    status = "unhealthy"
+    # Check database connection
+    db_status = "connected" if check_database_connection() else "disconnected"
     
-    try:
-        # Test database connection by executing a simple query
-        db.execute(text("SELECT 1"))
-        database_connected = True
-        status = "healthy"
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        database_connected = False
-        status = "unhealthy"
-    
+    # Return health status (NO VERSION FIELD)
     return HealthResponse(
-        status=status,
-        database_connected=database_connected,
-        timestamp=datetime.utcnow(),
-        version="1.0.0"
+        status="healthy",
+        timestamp=datetime.now(timezone.utc),
+        database=db_status
     )

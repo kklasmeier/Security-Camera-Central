@@ -46,7 +46,7 @@ fi
 
 # Check database connection
 echo "Checking database connection..."
-python3 check_db.py || {
+python3 -c "from api.database import check_database_connection; exit(0 if check_database_connection() else 1)" || {
     echo ""
     echo "ERROR: Cannot connect to database!"
     echo "Please check:"
@@ -70,5 +70,6 @@ echo ""
 echo "Press Ctrl+C to stop the server"
 echo ""
 
-# Start the API server
+# Start the API server with unified logging
+# Note: Logging configuration is in api/main.py and will apply to all loggers including Uvicorn
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload

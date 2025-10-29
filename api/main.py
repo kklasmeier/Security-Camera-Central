@@ -5,17 +5,54 @@ Main FastAPI application entry point
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import logging.config
 from contextlib import asynccontextmanager
 
 from api.config import settings
 from api.database import check_database_connection
-from api.routes import health
+from api.routes import health, cameras
 
-# Configure logging
-logging.basicConfig(
-    level=settings.log_level,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure unified logging for all loggers (including Uvicorn)
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S",
+        },
+    },
+    "handlers": {
+        "default": {
+            "formatter": "default",
+            "class": "logging.StreamHandler",
+            "stream": "ext://sys.stdout",
+        },
+    },
+    "loggers": {
+        "": {  # Root logger
+            "handlers": ["default"],
+            "level": settings.log_level,
+        },
+        "uvicorn": {
+            "handlers": ["default"],
+            "level": settings.log_level,
+            "propagate": False,
+        },
+        "uvicorn.access": {
+            "handlers": ["default"],
+            "level": settings.log_level,
+            "propagate": False,
+        },
+        "uvicorn.error": {
+            "handlers": ["default"],
+            "level": settings.log_level,
+            "propagate": False,
+        },
+    },
+}
+
+logging.config.dictConfig(LOGGING_CONFIG)
 logger = logging.getLogger(__name__)
 
 
@@ -59,11 +96,15 @@ app.add_middleware(
 
 # Include routers with /api/v1 prefix
 app.include_router(health.router, prefix="/api/v1", tags=["Health"])
+app.include_router(cameras.router, prefix="/api/v1", tags=["Cameras"])
 
-# Future routers will be added here in subsequent sessions:
-# app.include_router(cameras.router, prefix="/api/v1", tags=["Cameras"])
-# app.include_router(events.router, prefix="/api/v1", tags=["Events"])
-# app.include_router(logs.router, prefix="/api/v1", tags=["Logs"])
+# Include event routes
+from api.routes import events
+app.include_router(events.router, prefix="/api/v1", tags=["Events"])
+
+# Include log routes
+from api.routes import logs
+app.include_router(logs.router, prefix="/api/v1", tags=["Logs"])
 
 
 @app.get("/")

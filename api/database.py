@@ -7,6 +7,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import OperationalError
 import logging
+from typing import Generator
 
 from api.config import settings
 
@@ -28,8 +29,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 # Base class for ORM models
 Base = declarative_base()
 
-
-def get_db() -> Session:
+def get_db() -> Generator[Session, None, None]:
     """
     Dependency that provides a database session to route handlers.
     
@@ -45,6 +45,7 @@ def get_db() -> Session:
     try:
         yield db
     finally:
+        db.close()
         db.close()
 
 

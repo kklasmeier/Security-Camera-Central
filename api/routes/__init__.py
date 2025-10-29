@@ -1,1 +1,4 @@
-# Routes package initialization
+"""
+API Routes Package
+Exposes all route modules
+"""
