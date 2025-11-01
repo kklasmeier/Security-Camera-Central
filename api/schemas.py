@@ -282,7 +282,7 @@ class LogEntry(BaseModel):
         ..., 
         description="When log entry was generated (ISO 8601 format)"
     )
-    level: Literal["INFO", "WARNING", "ERROR"] = Field(
+    level: Literal["INFO", "WARNING", "ERROR", "DEBUG"] = Field(
         ..., 
         description="Log severity level"
     )

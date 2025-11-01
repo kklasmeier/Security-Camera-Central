@@ -233,8 +233,8 @@ def test_list_cameras():
 # ============================================================================
 
 def test_get_all_logs():
-    """Test GET /api/v1/logs with no filters"""
-    print_header("TEST 2: Get All Logs (Default)")
+    """Test GET /api/v1/logs with no filters (should default to last 15 minutes)"""
+    print_header("TEST 2: Get All Logs (Default - Last 15 Minutes)")
     
     print_test("GET /api/v1/logs")
     
@@ -248,6 +248,7 @@ def test_get_all_logs():
             print_success(f"Total: {result['total']}")
             print_success(f"Limit: {result['limit']}")
             print_success(f"Offset: {result['offset']}")
+            print_info("Note: Should only return logs from last 15 minutes by default")
             
             # Verify structure
             test_passed = True
@@ -279,8 +280,8 @@ def test_get_all_logs():
                 else:
                     mark_test_failed()
             else:
-                print_error("No logs returned")
-                mark_test_failed()
+                print_info("No logs in last 15 minutes (this is OK)")
+                mark_test_passed()
         else:
             print_error(f"Status: {response.status_code}")
             print_error(f"Response: {response.text}")
@@ -538,6 +539,68 @@ def test_parameter_validation():
 
 
 # ============================================================================
+# TEST 8: After Parameter (Date Filtering)
+# ============================================================================
+
+def test_after_parameter():
+    """Test GET /api/v1/logs?after=<timestamp>"""
+    print_header("TEST 8: After Parameter (Date Filtering)")
+    
+    # Get a timestamp from 1 hour ago
+    from datetime import timedelta, timezone
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+    timestamp_str = one_hour_ago.isoformat()
+    
+    print_test(f"GET /api/v1/logs?after={timestamp_str}")
+    
+    try:
+        response = requests.get(f"{BASE_URL}/logs", params={"after": timestamp_str})
+        
+        if response.status_code == 200:
+            result = response.json()
+            print_success(f"Status: {response.status_code}")
+            print_success(f"Returned {len(result['logs'])} logs from last hour")
+            print_success(f"Total: {result['total']}")
+            
+            # Verify all logs are after the specified time
+            after_time_correct = True
+            for log in result['logs']:
+                # Parse the timestamp - handle both with and without timezone
+                timestamp_str = log['timestamp']
+                if 'Z' in timestamp_str:
+                    timestamp_str = timestamp_str.replace('Z', '+00:00')
+                
+                log_time = datetime.fromisoformat(timestamp_str)
+                
+                # Make sure log_time is timezone-aware
+                if log_time.tzinfo is None:
+                    log_time = log_time.replace(tzinfo=timezone.utc)
+                
+                if log_time < one_hour_ago:
+                    after_time_correct = False
+                    break
+            
+            if after_time_correct:
+                print_success("All logs are on or after specified time")
+                mark_test_passed()
+            else:
+                print_error("Some logs are before specified time")
+                mark_test_failed()
+            
+            if len(result['logs']) > 0:
+                print_info("Sample log:")
+                print_json(result['logs'][0])
+        else:
+            print_error(f"Status: {response.status_code}")
+            print_error(f"Response: {response.text}")
+            mark_test_failed()
+    
+    except Exception as e:
+        print_error(f"Error: {e}")
+        mark_test_failed()
+
+
+# ============================================================================
 # MAIN
 # ============================================================================
 
@@ -560,6 +623,7 @@ def main():
     test_combined_filters()
     test_pagination()
     test_parameter_validation()
+    test_after_parameter()
     
     # Summary
     print_header("TEST SUMMARY")

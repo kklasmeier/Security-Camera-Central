@@ -4,6 +4,7 @@ Log-related API endpoints
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from datetime import datetime, timedelta, timezone
 import logging
 
 from api.database import get_db
@@ -95,6 +96,7 @@ def ingest_logs(
 def get_logs(
     source: Optional[str] = None,
     level: Optional[str] = None,
+    after: Optional[datetime] = None,
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db)
@@ -107,15 +109,17 @@ def get_logs(
     **Query Parameters:**
     - **source** (optional): Filter by source (e.g., "camera_1", "central")
     - **level** (optional): Filter by level ("INFO", "WARNING", "ERROR")
+    - **after** (optional): Return logs on or after this timestamp (ISO 8601 format)
+      - If not provided, defaults to 15 minutes ago
     - **limit** (optional): Max results (default: 100, max: 500)
     - **offset** (optional): Skip first N results (default: 0)
     
     **Examples:**
-    - `/api/v1/logs` - All logs (100 most recent)
-    - `/api/v1/logs?source=camera_1` - Logs from camera_1
-    - `/api/v1/logs?level=ERROR` - All error logs
-    - `/api/v1/logs?source=camera_1&level=ERROR` - Error logs from camera_1
-    - `/api/v1/logs?limit=50&offset=0` - First 50 logs
+    - `/api/v1/logs` - Last 15 minutes of logs
+    - `/api/v1/logs?after=2025-10-28T14:00:00` - Logs from Oct 28 14:00 onward
+    - `/api/v1/logs?source=camera_1` - Camera 1 logs from last 15 minutes
+    - `/api/v1/logs?level=ERROR&after=2025-10-28T00:00:00` - All error logs from Oct 28
+    - `/api/v1/logs?source=camera_1&level=ERROR&after=2025-10-28T14:00:00` - Specific filters
     """
     try:
         # Validate parameters
@@ -138,8 +142,15 @@ def get_logs(
                 detail="level must be one of: INFO, WARNING, ERROR"
             )
         
+        # Default to 15 minutes ago if 'after' not provided
+        if after is None:
+            after = datetime.now(timezone.utc) - timedelta(minutes=15)
+        
         # Build query
         query = db.query(Log)
+        
+        # Filter by timestamp (on or after the specified time)
+        query = query.filter(Log.timestamp >= after)
         
         # Filter by source if provided
         if source:
@@ -161,7 +172,7 @@ def get_logs(
         # Execute
         logs = query.all()
         
-        logger.info(f"Returning {len(logs)} logs (total: {total}, source: {source}, level: {level})")
+        logger.info(f"Returning {len(logs)} logs (total: {total}, source: {source}, level: {level}, after: {after})")
         
         return LogListResponse(
             logs=logs,
