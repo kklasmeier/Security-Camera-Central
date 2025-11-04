@@ -4,3 +4,4 @@ venv
 __pycache__
 api/__pycache__
 api/routes/__pycache__
+scripts/logs

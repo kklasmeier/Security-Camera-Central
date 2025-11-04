@@ -119,6 +119,7 @@ function getMoreLogs() {
     const filterInfo = document.getElementById('filter-info').value;
     const filterWarning = document.getElementById('filter-warning').value;
     const filterError = document.getElementById('filter-error').value;
+    const filterSource = document.getElementById('filter-source').value;
     
     // Disable button and show loading
     btn.disabled = true;
@@ -131,6 +132,11 @@ function getMoreLogs() {
         warning: filterWarning,
         error: filterError
     });
+    
+    // Add source parameter if set
+    if (filterSource) {
+        params.append('source', filterSource);
+    }
     
     // Fetch new logs
     fetch(`api/get_new_logs.php?${params.toString()}`)
@@ -170,15 +176,21 @@ function getMoreLogs() {
 
 /**
  * Helper function to create log row element
- * @param {Object} log - Log object with id, timestamp, level, message
+ * @param {Object} log - Log object with id, timestamp, level, message, source
  * @returns {HTMLElement} Table row element
  */
 function createLogRow(log) {
     const tr = document.createElement('tr');
     tr.className = `log-row log-${log.level.toLowerCase()}`;
     
+    // Check if we're showing all cameras (source column visible)
+    const showSource = document.querySelector('.log-source') !== null;
+    
+    const sourceCell = showSource ? `<td class="log-source">${escapeHtml(log.source)}</td>` : '';
+    
     tr.innerHTML = `
         <td class="log-id">${log.id}</td>
+        ${sourceCell}
         <td class="log-timestamp">${formatLogTimestamp(log.timestamp)}</td>
         <td class="log-level">
             <span class="level-badge level-${log.level.toLowerCase()}">

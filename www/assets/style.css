@@ -1569,3 +1569,205 @@ tbody tr:last-child td {
     color: #999;
     margin-bottom: 4px;
 }
+
+/* ============================================================================
+   Session 6: Event Detail Page - CSS Additions
+   Add these styles to your existing assets/style.css file
+   ============================================================================ */
+
+/* Event title group - Event # and Camera name together */
+.event-title-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.event-camera-name {
+    font-size: 0.9em;
+    color: var(--color-text-secondary, #999);
+    font-weight: normal;
+}
+
+/* Transfer status badges */
+.transfer-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: 600;
+    margin-left: 10px;
+}
+
+.transfer-pending {
+    background: #4a3c1a;
+    color: #fbbf24;
+}
+
+.transfer-processing {
+    background: #1a3d5c;
+    color: #60a5fa;
+}
+
+.transfer-failed {
+    background: #5c1a1a;
+    color: #f87171;
+}
+
+/* Mobile responsiveness for event header */
+@media (max-width: 768px) {
+    .event-title-group {
+        margin-bottom: 10px;
+    }
+}
+
+/* ========================================
+   LOGS PAGE - CAMERA SELECTOR & FILTERS
+   ======================================== */
+
+/* Main container - matches index.php per-page-selector styling */
+.per-page-selector {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-md, 1rem);
+    background: var(--color-bg-card, #2a2a2a);
+    border: 1px solid var(--color-border, #444);
+    border-radius: var(--border-radius, 8px);
+    margin-bottom: var(--space-lg, 1.5rem);
+    gap: var(--space-md, 1rem);
+    flex-wrap: wrap;
+}
+
+/* Camera selector section (left) */
+.camera-filter-section {
+    flex: 0 0 auto;
+}
+
+/* Level checkboxes form wrapper */
+.level-filters-form {
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0;
+}
+
+/* Level checkboxes section (right) */
+.level-filters-section {
+    display: flex;
+    gap: var(--space-md, 1rem);
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Remove any default form styling from camera selector */
+.camera-selector-form {
+    background: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: var(--space-sm, 0.5rem) !important;
+}
+
+/* Camera selector label - match index.php exactly */
+.camera-selector-form label {
+    color: var(--color-text-secondary, #999) !important;
+    font-size: var(--font-size-base, 1rem) !important;
+    font-weight: normal !important;
+    margin: 0 !important;
+}
+
+/* Camera selector dropdown - match index.php exactly */
+.camera-selector-form select {
+    padding: var(--space-sm, 0.5rem) var(--space-md, 1rem) !important;
+    background: var(--color-bg-card, #2a2a2a) !important;
+    border: 1px solid var(--color-border, #444) !important;
+    border-radius: var(--border-radius, 8px) !important;
+    color: var(--color-text-primary, #fff) !important;
+    font-size: var(--font-size-base, 1rem) !important;
+    cursor: pointer !important;
+    transition: all var(--transition-fast, 0.2s) !important;
+    min-height: 44px !important;
+    font-family: inherit !important;
+}
+
+.camera-selector-form select:hover {
+    border-color: var(--color-border-light, #666) !important;
+    background: var(--color-bg-hover, #333) !important;
+}
+
+.camera-selector-form select:focus {
+    outline: 2px solid var(--color-primary, #4a9eff) !important;
+    outline-offset: 2px !important;
+}
+
+/* Checkbox styling */
+.filter-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs, 0.25rem);
+    cursor: pointer;
+    color: var(--color-text-primary, #fff);
+}
+
+.filter-checkbox input[type="checkbox"] {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+}
+
+.filter-label {
+    font-size: var(--font-size-base, 1rem);
+    user-select: none;
+}
+
+/* Log source column styling */
+.log-source {
+    font-family: monospace;
+    font-size: 0.9em;
+    color: var(--color-text-secondary, #999);
+    white-space: nowrap;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .per-page-selector {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .camera-filter-section {
+        width: 100%;
+    }
+    
+    .camera-selector-form {
+        display: flex !important;
+        width: 100%;
+    }
+    
+    .camera-selector-form select {
+        flex: 1;
+    }
+    
+    .level-filters-form {
+        width: 100%;
+    }
+    
+    .level-filters-section {
+        justify-content: flex-start;
+        width: 100%;
+        padding-top: var(--space-sm, 0.5rem);
+        border-top: 1px solid var(--color-border, #444);
+    }
+}
+
+/* Small mobile screens - stack checkboxes vertically */
+@media (max-width: 480px) {
+    .level-filters-section {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-sm, 0.5rem);
+    }
+}

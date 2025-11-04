@@ -13,6 +13,8 @@ $since = $_GET['since'] ?? '';
 $filter_info = isset($_GET['info']) && $_GET['info'] == '1';
 $filter_warning = isset($_GET['warning']) && $_GET['warning'] == '1';
 $filter_error = isset($_GET['error']) && $_GET['error'] == '1';
+$source_filter = isset($_GET['source']) && $_GET['source'] !== '' ? $_GET['source'] : null;
+
 // Build level filter array
 $level_filter = [];
 if ($filter_info) $level_filter[] = 'INFO';
@@ -22,7 +24,7 @@ if ($filter_error) $level_filter[] = 'ERROR';
 try {
     // Get new logs since timestamp
     $db = new Database();
-    $logs = $db->get_logs_since($since, $level_filter);
+    $logs = $db->get_logs_since($since, $level_filter, $source_filter);
     
     // Return JSON response
     echo json_encode([

@@ -4,10 +4,23 @@
  * Terminal-style display with filtering and AJAX "Get More" functionality
  */
 
+require_once 'includes/session.php';
 require_once 'includes/db.php';
 require_once 'includes/functions.php';
+require_once 'includes/camera_selector.php';
+
+// Handle camera selection BEFORE any output
+handle_camera_selection();
 
 $db = new Database();
+
+// Get selected camera for filtering logs
+$camera_id = get_selected_camera();
+
+// Map camera selection to log source filter
+// 'all' means show all sources (including 'central')
+// 'camera_1' means show only 'camera_1' logs
+$source_filter = ($camera_id === 'all') ? null : $camera_id;
 
 // Parse filter parameters from URL
 $filter_info = isset($_GET['info']) ? 1 : 0;
@@ -37,7 +50,7 @@ $logs = [];
 $no_filters_selected = empty($level_filter);
 
 if (!$no_filters_selected) {
-    $logs = $db->get_logs(1000, 0, $level_filter, 'ASC');
+    $logs = $db->get_logs(1000, 0, $level_filter, 'ASC', $source_filter);
     
     // DEBUG
     echo "<!-- DEBUG: After query, log count=" . count($logs) . " -->";
@@ -60,41 +73,51 @@ include 'includes/header.php';
 <div class="container">
     <h1 class="logs-title">System Logs</h1>
     
-    <!-- Filter Form -->
-    <form method="get" action="logs.php" class="log-filters">
-        <label class="filter-checkbox">
-            <input 
-                type="checkbox" 
-                name="info" 
-                value="1"
-                <?php echo $filter_info ? 'checked' : ''; ?>
-                onchange="this.form.submit()"
-            >
-            <span class="filter-label">INFO</span>
-        </label>
+    <!-- Combined Filter Section (Camera + Level Filters) -->
+    <div class="per-page-selector">
+        <!-- Camera Selector (left side) - handles its own form submission -->
+        <div class="camera-filter-section">
+            <?php render_camera_selector('logs.php'); ?>
+        </div>
         
-        <label class="filter-checkbox">
-            <input 
-                type="checkbox" 
-                name="warning" 
-                value="1"
-                <?php echo $filter_warning ? 'checked' : ''; ?>
-                onchange="this.form.submit()"
-            >
-            <span class="filter-label">WARNING</span>
-        </label>
-        
-        <label class="filter-checkbox">
-            <input 
-                type="checkbox" 
-                name="error" 
-                value="1"
-                <?php echo $filter_error ? 'checked' : ''; ?>
-                onchange="this.form.submit()"
-            >
-            <span class="filter-label">ERROR</span>
-        </label>
-    </form>
+        <!-- Level Checkboxes (right side) - separate form -->
+        <form method="get" action="logs.php" class="level-filters-form">
+            <div class="level-filters-section">
+                <label class="filter-checkbox">
+                    <input 
+                        type="checkbox" 
+                        name="info" 
+                        value="1"
+                        <?php echo $filter_info ? 'checked' : ''; ?>
+                        onchange="this.form.submit()"
+                    >
+                    <span class="filter-label">INFO</span>
+                </label>
+                
+                <label class="filter-checkbox">
+                    <input 
+                        type="checkbox" 
+                        name="warning" 
+                        value="1"
+                        <?php echo $filter_warning ? 'checked' : ''; ?>
+                        onchange="this.form.submit()"
+                    >
+                    <span class="filter-label">WARNING</span>
+                </label>
+                
+                <label class="filter-checkbox">
+                    <input 
+                        type="checkbox" 
+                        name="error" 
+                        value="1"
+                        <?php echo $filter_error ? 'checked' : ''; ?>
+                        onchange="this.form.submit()"
+                    >
+                    <span class="filter-label">ERROR</span>
+                </label>
+            </div>
+        </form>
+    </div>
     
     <?php if ($no_filters_selected): ?>
         <!-- No Filters Selected Message -->
@@ -113,6 +136,9 @@ include 'includes/header.php';
                 <thead>
                     <tr>
                         <th>ID</th>
+                        <?php if (is_all_cameras_selected()): ?>
+                            <th>Source</th>
+                        <?php endif; ?>
                         <th>Timestamp</th>
                         <th>Level</th>
                         <th>Message</th>
@@ -122,6 +148,9 @@ include 'includes/header.php';
                     <?php foreach ($logs as $log): ?>
                         <tr class="log-row log-<?php echo strtolower($log['level']); ?>">
                             <td class="log-id"><?php echo htmlspecialchars($log['id']); ?></td>
+                            <?php if (is_all_cameras_selected()): ?>
+                                <td class="log-source"><?php echo htmlspecialchars($log['source']); ?></td>
+                            <?php endif; ?>
                             <td class="log-timestamp">
                                 <?php echo format_log_timestamp($log['timestamp']); ?>
                             </td>
@@ -153,6 +182,7 @@ include 'includes/header.php';
         <input type="hidden" id="filter-info" value="<?php echo $filter_info; ?>">
         <input type="hidden" id="filter-warning" value="<?php echo $filter_warning; ?>">
         <input type="hidden" id="filter-error" value="<?php echo $filter_error; ?>">
+        <input type="hidden" id="filter-source" value="<?php echo htmlspecialchars($source_filter ?? ''); ?>">
     <?php endif; ?>
 </div>
 

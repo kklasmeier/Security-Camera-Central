@@ -34,8 +34,8 @@ if (!$event) {
 $prev_id = $db->get_previous_event_id($event_id);
 $next_id = $db->get_next_event_id($event_id);
 
-// Check if video is still processing
-$video_processing = is_video_processing($event['video_path']);
+// Check if video is still processing - use mp4_conversion_status field
+$video_processing = ($event['mp4_conversion_status'] !== 'complete');
 
 // Get URLs for media files
 $video_url = get_video_url($event);
@@ -56,7 +56,12 @@ include 'includes/header.php';
     <!-- Event Details Card -->
     <div class="event-details-card">
         <div class="event-details-header">
-            <h1 class="event-id">Event #<?php echo $event_id; ?></h1>
+            <div class="event-title-group">
+                <h1 class="event-id">Event #<?php echo $event_id; ?></h1>
+                <span class="event-camera-name">
+                    <?php echo htmlspecialchars(get_camera_display_name($event['camera_id'], $db)); ?>
+                </span>
+            </div>
             
             <div class="event-navigation">
                 <?php if ($prev_id): ?>
@@ -102,44 +107,69 @@ include 'includes/header.php';
         
         <div class="detail-item">
             <span class="detail-label">Duration:</span>
-            <span class="detail-value"><?php echo $event['duration_seconds']; ?> seconds</span>
-        </div>
-        
-        <?php if (!empty($event['video_path'])): ?>
-        <div class="detail-item">
-            <span class="detail-label">Video File:</span>
             <span class="detail-value">
-                <?php echo basename($event['video_path']); ?>
-                <?php if (file_exists($event['video_path'])): ?>
-                    (<?php echo get_file_size($event['video_path']); ?>)
-                <?php endif; ?>
+                <?php 
+                // Check multiple possible field names and provide fallback
+                if (isset($event['duration_seconds'])) {
+                    echo intval($event['duration_seconds']);
+                } elseif (isset($event['video_duration'])) {
+                    echo intval($event['video_duration']);
+                } elseif (isset($event['duration'])) {
+                    echo intval($event['duration']);
+                } else {
+                    echo '60'; // Default fallback
+                }
+                ?> seconds
             </span>
         </div>
-        <?php endif; ?>
         
-        <?php if (!empty($event['image_a_path'])): ?>
+        <!-- Picture A -->
         <div class="detail-item">
             <span class="detail-label">Picture A:</span>
             <span class="detail-value">
-                <?php echo basename($event['image_a_path']); ?>
-                <?php if (file_exists($event['image_a_path'])): ?>
-                    (<?php echo get_file_size($event['image_a_path']); ?>)
+                <?php if (!empty($event['image_a_path'])): ?>
+                    <?php echo basename($event['image_a_path']); ?>
+                    <?php if (!$event['image_a_transferred']): ?>
+                        <span class="transfer-badge transfer-pending">⏳ Transfer Pending</span>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <span class="transfer-badge transfer-pending">⏳ Not Available</span>
                 <?php endif; ?>
             </span>
         </div>
-        <?php endif; ?>
 
-        <?php if (!empty($event['image_b_path'])): ?>
+        <!-- Picture B -->
         <div class="detail-item">
             <span class="detail-label">Picture B:</span>
             <span class="detail-value">
-                <?php echo basename($event['image_b_path']); ?>
-                <?php if (file_exists($event['image_b_path'])): ?>
-                    (<?php echo get_file_size($event['image_b_path']); ?>)
+                <?php if (!empty($event['image_b_path'])): ?>
+                    <?php echo basename($event['image_b_path']); ?>
+                    <?php if (!$event['image_b_transferred']): ?>
+                        <span class="transfer-badge transfer-pending">⏳ Transfer Pending</span>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <span class="transfer-badge transfer-pending">⏳ Not Available</span>
                 <?php endif; ?>
             </span>
         </div>
-        <?php endif; ?>
+
+        <!-- Video -->
+        <div class="detail-item">
+            <span class="detail-label">Video:</span>
+            <span class="detail-value">
+                <?php if ($event['mp4_conversion_status'] === 'complete' && !empty($event['video_mp4_path'])): ?>
+                    <?php echo basename($event['video_mp4_path']); ?>
+                <?php elseif ($event['mp4_conversion_status'] === 'processing'): ?>
+                    <span class="transfer-badge transfer-processing">⏳ Processing</span>
+                <?php elseif ($event['mp4_conversion_status'] === 'failed'): ?>
+                    <span class="transfer-badge transfer-failed">✗ Conversion Failed</span>
+                <?php elseif (!$event['video_transferred']): ?>
+                    <span class="transfer-badge transfer-pending">⏳ Transfer Pending</span>
+                <?php else: ?>
+                    <span class="transfer-badge transfer-pending">⏳ Pending Conversion</span>
+                <?php endif; ?>
+            </span>
+        </div>
     </div>
     
     <!-- Video Player or Processing Status -->
@@ -164,7 +194,7 @@ include 'includes/header.php';
         </video>
     <?php else: ?>
         <div class="processing-status">
-            <div class="processing-status-icon">❌</div>
+            <div class="processing-status-icon">✗</div>
             <div class="processing-status-title">Video Not Available</div>
             <div class="processing-status-message">
                 The video file for this event could not be found.
