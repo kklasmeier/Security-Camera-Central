@@ -248,6 +248,12 @@ async function startStream() {
     const streamImage = document.getElementById('stream-image');
     const streamPlaceholder = document.getElementById('stream-placeholder');
     const streamInfo = document.getElementById('stream-info');
+    const streamContainer = document.getElementById('stream-container');
+    
+    // Get camera details from data attributes
+    const cameraId = streamContainer.dataset.cameraId;
+    const cameraIp = streamContainer.dataset.cameraIp;
+    const cameraName = streamContainer.dataset.cameraName;
     
     try {
         // Disable button and show loading
@@ -255,48 +261,53 @@ async function startStream() {
         streamButton.textContent = 'Starting...';
         statusText.textContent = 'Starting';
         
-        // Set streaming flag via AJAX
-        const response = await fetch('api/set_streaming.php?action=start');
+        // Call central server API (which calls camera API)
+        const response = await fetch('api/set_streaming.php?action=start&camera=' + cameraId);
         const data = await response.json();
         
-        if (data.success) {
-            // Wait 2 seconds for MJPEG server to start
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            
-            // Show stream
-            streamPlaceholder.style.display = 'none';
-            streamImage.style.display = 'block';
-            streamImage.src = 'http://192.168.1.21:8080/stream.mjpg?t=' + Date.now();
-            
-            // Update status
-            statusIndicator.classList.add('status-active');
-            statusIndicator.classList.remove('status-inactive');
-            statusText.textContent = 'Streaming';
-            
-            // Update button
-            streamButton.textContent = 'Stop Stream';
-            streamButton.disabled = false;
-            streamButton.classList.remove('btn-success');
-            streamButton.classList.add('btn-error');
-            streamButton.onclick = stopStream;
-            
-            // Start timer
-            streamStartTime = Date.now();
-            startStreamTimer();
-            
-            // Show stream info
-            streamInfo.textContent = 'Motion detection: Paused while streaming';
-            
-        } else {
+        if (!response.ok || !data.success) {
             throw new Error(data.message || 'Failed to start stream');
         }
+        
+        // Wait 2 seconds for MJPEG server to fully start
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Show stream
+        streamPlaceholder.style.display = 'none';
+        streamImage.style.display = 'block';
+        streamImage.src = 'http://' + cameraIp + ':8080/stream.mjpg?t=' + Date.now();
+        
+        // Update status
+        statusIndicator.classList.add('status-active');
+        statusIndicator.classList.remove('status-inactive');
+        statusText.textContent = 'Streaming';
+        
+        // Update button
+        streamButton.textContent = 'Stop Stream';
+        streamButton.disabled = false;
+        streamButton.classList.remove('btn-success');
+        streamButton.classList.add('btn-error');
+        streamButton.onclick = stopStream;
+        
+        // Start timer
+        streamStartTime = Date.now();
+        startStreamTimer();
+        
+        // Show stream info with camera name
+        streamInfo.innerHTML = '<strong>' + escapeHtml(cameraName) + '</strong> - Motion detection paused while streaming';
         
     } catch (error) {
         console.error('Error starting stream:', error);
         statusText.textContent = 'Error';
         streamButton.textContent = 'Retry';
         streamButton.disabled = false;
-        alert('Failed to start stream: ' + error.message);
+        
+        // Show user-friendly error message
+        if (error.message.includes('unreachable')) {
+            alert('Camera is currently offline or unreachable.\n\nCamera: ' + cameraName + '\n\nPlease check the camera and try again.');
+        } else {
+            alert('Failed to start stream: ' + error.message);
+        }
     }
 }
 
@@ -307,6 +318,11 @@ async function stopStream() {
     const streamImage = document.getElementById('stream-image');
     const streamPlaceholder = document.getElementById('stream-placeholder');
     const streamInfo = document.getElementById('stream-info');
+    const streamContainer = document.getElementById('stream-container');
+    
+    // Get camera ID from data attribute
+    const cameraId = streamContainer.dataset.cameraId;
+    const cameraName = streamContainer.dataset.cameraName;
     
     try {
         // Disable button
@@ -316,40 +332,45 @@ async function stopStream() {
         // Stop timer
         stopStreamTimer();
         
-        // Set streaming flag to 0
-        const response = await fetch('api/set_streaming.php?action=stop');
+        // Call central server API to stop camera stream
+        const response = await fetch('api/set_streaming.php?action=stop&camera=' + cameraId);
         const data = await response.json();
         
-        if (data.success) {
-            // Hide stream
-            streamImage.style.display = 'none';
-            streamImage.src = '';
-            streamPlaceholder.style.display = 'flex';
-            
-            // Update status
-            statusIndicator.classList.remove('status-active');
-            statusIndicator.classList.add('status-inactive');
-            statusText.textContent = 'Stopped';
-            
-            // Update button
-            streamButton.textContent = 'Start Stream';
-            streamButton.disabled = false;
-            streamButton.classList.remove('btn-error');
-            streamButton.classList.add('btn-success');
-            streamButton.onclick = startStream;
-            
-            // Clear info
-            streamInfo.textContent = '';
-            
-        } else {
+        if (!response.ok || !data.success) {
             throw new Error(data.message || 'Failed to stop stream');
         }
+        
+        // Hide stream
+        streamImage.style.display = 'none';
+        streamImage.src = '';
+        streamPlaceholder.style.display = 'flex';
+        
+        // Update status
+        statusIndicator.classList.remove('status-active');
+        statusIndicator.classList.add('status-inactive');
+        statusText.textContent = 'Stopped';
+        
+        // Update button
+        streamButton.textContent = 'Start Stream';
+        streamButton.disabled = false;
+        streamButton.classList.remove('btn-error');
+        streamButton.classList.add('btn-success');
+        streamButton.onclick = startStream;
+        
+        // Clear info
+        streamInfo.textContent = '';
         
     } catch (error) {
         console.error('Error stopping stream:', error);
         streamButton.textContent = 'Stop Stream';
         streamButton.disabled = false;
-        alert('Error stopping stream: ' + error.message);
+        
+        // Show error but still clean up UI
+        streamImage.style.display = 'none';
+        streamImage.src = '';
+        streamPlaceholder.style.display = 'flex';
+        
+        alert('Error stopping stream: ' + error.message + '\n\nThe stream may have already been stopped.');
     }
 }
 
@@ -387,10 +408,14 @@ function stopStreamTimer() {
 window.addEventListener('beforeunload', function(e) {
     // Stop stream if active
     const streamImage = document.getElementById('stream-image');
-    if (streamImage && streamImage.style.display !== 'none') {
+    const streamContainer = document.getElementById('stream-container');
+    
+    if (streamImage && streamImage.style.display !== 'none' && streamContainer) {
+        const cameraId = streamContainer.dataset.cameraId;
+        
         // Use synchronous request for cleanup
         const xhr = new XMLHttpRequest();
-        xhr.open('GET', 'api/set_streaming.php?action=stop', false); // false = synchronous
+        xhr.open('GET', 'api/set_streaming.php?action=stop&camera=' + cameraId, false); // false = synchronous
         xhr.send();
     }
 });
