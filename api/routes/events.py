@@ -9,7 +9,7 @@ import logging
 
 from api.database import get_db
 from api.models import Event, Camera
-from api.schemas import EventCreateRequest, EventResponse, FileUpdateRequest, EventListResponse
+from api.schemas import EventCreateRequest, EventResponse, FileUpdateRequest, EventListResponse, EventStatusUpdateRequest
 
 logger = logging.getLogger(__name__)
 
@@ -344,4 +344,80 @@ def get_event(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get event: {str(e)}"
+        )
+
+@router.patch("/events/{event_id}/status", response_model=EventResponse)
+def update_event_status(
+    event_id: int,
+    request: EventStatusUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Update event processing status.
+    
+    Called by cameras when event processing is interrupted (e.g., for live streaming)
+    or when event processing completes or fails.
+    
+    - **event_id**: Event ID (from POST /api/v1/events response)
+    - **status**: New status value
+    
+    **Valid Status Values:**
+    - "processing" - Event currently being processed (initial state)
+    - "complete" - Event fully processed, all files saved
+    - "interrupted" - Event aborted (e.g., for live streaming)
+    - "failed" - Event processing failed with error
+    
+    Returns the updated event record.
+    
+    **Use Cases:**
+    - Camera aborts event for live streaming → status = "interrupted"
+    - Camera finishes processing normally → status = "complete"
+    - Camera encounters error → status = "failed"
+    """
+    try:
+        # Find event
+        event = db.query(Event).filter(Event.id == event_id).first()
+        if not event:
+            logger.warning(f"Status update failed: Event {event_id} not found")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Event {event_id} not found"
+            )
+        
+        # Validate status value
+        valid_statuses = ["processing", "complete", "interrupted", "failed"]
+        if request.status not in valid_statuses:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+            )
+        
+        # Log status change
+        old_status = event.status if hasattr(event, 'status') else 'unknown'
+        logger.info(
+            f"Updating event {event_id} ({event.camera_id}): "
+            f"status {old_status} → {request.status}"
+        )
+        
+        # Update status
+        setattr(event, "status", request.status)
+        
+        # Commit changes
+        db.commit()
+        db.refresh(event)
+        
+        logger.info(f"Event {event_id} status updated successfully: {request.status}")
+        
+        return event
+    
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404)
+        raise
+    
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error updating event {event_id} status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update event status: {str(e)}"
         )

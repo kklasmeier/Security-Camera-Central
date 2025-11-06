@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field, validator
 from datetime import datetime
 from typing import Optional, Literal, List
 import re
-
+from pydantic import BaseModel, Field, validator
+from typing import Literal
 
 # ============================================================================
 # HEALTH CHECK SCHEMA
@@ -185,8 +186,12 @@ class EventResponse(BaseModel):
     id: int
     camera_id: str
     timestamp: datetime
-    motion_score: Optional[float] = None
-    
+    motion_score: Optional[float] = None    
+    status: str = Field(
+        default="processing",
+        description="Event processing status: processing, complete, interrupted, failed"
+    )
+
     # File paths
     image_a_path: Optional[str] = None
     image_b_path: Optional[str] = None
@@ -214,13 +219,9 @@ class EventResponse(BaseModel):
     ai_description: Optional[str] = None
     
     created_at: datetime
-    
-    class Config:
-        from_attributes = True  # Allows conversion from SQLAlchemy model
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
 
+    class Config:
+        orm_mode = True
 
 class EventListResponse(BaseModel):
     """Response schema for list of events with pagination metadata"""
@@ -353,5 +354,35 @@ class LogListResponse(BaseModel):
                 "total": 1,
                 "limit": 100,
                 "offset": 0
+            }
+        }
+
+
+class EventStatusUpdateRequest(BaseModel):
+    """
+    Request schema for updating event status.
+    
+    Used by cameras to update event processing status:
+    - "interrupted" when aborted for live streaming
+    - "complete" when processing finishes normally
+    - "failed" when processing encounters an error
+    """
+    status: Literal["processing", "complete", "interrupted", "failed"] = Field(
+        ...,
+        description="New event status"
+    )
+    
+    @validator('status')
+    def validate_status(cls, v):
+        """Ensure status is one of the valid values."""
+        valid = ["processing", "complete", "interrupted", "failed"]
+        if v not in valid:
+            raise ValueError(f"status must be one of: {', '.join(valid)}")
+        return v
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "status": "interrupted"
             }
         }

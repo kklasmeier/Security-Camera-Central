@@ -7,7 +7,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime, timezone
 
 from api.database import Base
-
+from sqlalchemy import Column, String
 
 class Camera(Base):
     """Camera table - stores information about each camera"""
@@ -35,7 +35,14 @@ class Event(Base):
     camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     motion_score = Column(Float, nullable=True)
-    
+
+    status = Column(
+        String(20),
+        default="processing",
+        nullable=False,
+        comment="Event processing status: processing, complete, interrupted, failed"
+    )
+
     # File paths (on NFS share) - relative to /mnt/security_footage
     image_a_path = Column(String(500), nullable=True)
     image_b_path = Column(String(500), nullable=True)
