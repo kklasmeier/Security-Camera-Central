@@ -96,6 +96,19 @@ include 'includes/header.php';
             <span class="detail-value"><?php echo format_event_timestamp($event['timestamp']); ?></span>
         </div>
         
+        <!-- Event Status -->
+        <div class="detail-item">
+            <span class="detail-label">Status:</span>
+            <span class="detail-value">
+                <?php 
+                $status_badge = get_event_status_badge($event['status'] ?? 'complete');
+                ?>
+                <span class="badge badge-status-<?php echo $status_badge['color']; ?>">
+                    <?php echo $status_badge['symbol']; ?> <?php echo $status_badge['label']; ?>
+                </span>
+            </span>
+        </div>
+        
         <div class="detail-item">
             <span class="detail-label">Motion Score:</span>
             <span class="detail-value">

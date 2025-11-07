@@ -6,3 +6,4 @@ api/__pycache__
 api/routes/__pycache__
 scripts/logs
 run_api.log
+scripts/venv

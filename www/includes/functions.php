@@ -90,6 +90,57 @@ function get_motion_badge($score) {
 }
 
 /**
+ * Get event status badge information
+ * 
+ * @param string $status Event processing status from database
+ * @return array ['color' => string, 'label' => string, 'symbol' => string]
+ * 
+ * Status types:
+ * - complete: Event fully processed (green)
+ * - interrupted: Event aborted for live streaming (yellow)
+ * - processing: Event currently being processed (blue)
+ * - failed: Event processing failed (red)
+ */
+function get_event_status_badge($status) {
+    switch (strtolower($status)) {
+        case 'complete':
+            return [
+                'color' => 'complete',      // CSS class: .badge-status-complete
+                'label' => 'Complete',
+                'symbol' => '✓'             // Checkmark
+            ];
+        
+        case 'interrupted':
+            return [
+                'color' => 'interrupted',   // CSS class: .badge-status-interrupted
+                'label' => 'Interrupted',
+                'symbol' => '⚠'             // Warning symbol
+            ];
+        
+        case 'processing':
+            return [
+                'color' => 'processing',    // CSS class: .badge-status-processing
+                'label' => 'Processing',
+                'symbol' => '⏳'            // Hourglass
+            ];
+        
+        case 'failed':
+            return [
+                'color' => 'failed',        // CSS class: .badge-status-failed
+                'label' => 'Failed',
+                'symbol' => '✗'             // X mark
+            ];
+        
+        default:
+            return [
+                'color' => 'unknown',       // CSS class: .badge-status-unknown
+                'label' => 'Unknown',
+                'symbol' => '?'
+            ];
+    }
+}
+
+/**
  * Check if video is still being processed/converted
  * 
  * @param string $video_h264_path Relative H.264 path from database (e.g., "camera_1/videos/file.h264")

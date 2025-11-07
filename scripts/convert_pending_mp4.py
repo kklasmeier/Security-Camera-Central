@@ -1,0 +1,509 @@
+#!/usr/bin/env python3
+"""
+convert_pending_mp4.py
+Continuous MP4 converter daemon for Security-Camera-Central.
+
+- Polls MariaDB for events with video_transferred=1 and mp4_conversion_status='pending'
+- Atomically claims one event at a time and dispatches work to a thread pool
+- Converts H.264 -> MP4 (container copy, no re-encode): ffmpeg -c copy -movflags faststart
+- Updates DB on success/failure; on success also sets overall status='complete'
+- Deletes .h264 after successful, non-empty MP4 is written
+- Continuous loop with exponential backoff (0.5 → 7s, reset on any claim)
+- Plain text logging with timestamps + self-managed daily rotation (keep 6 backups)
+- Graceful shutdown: finishes in-flight jobs before exiting
+"""
+
+import os
+import sys
+import time
+import signal
+import queue
+import shutil
+import threading
+import subprocess
+from datetime import datetime, date
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.exc import SQLAlchemyError
+from typing import Optional
+
+# ======================================================================================
+# CONFIG / ENV LOADING
+# ======================================================================================
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
+
+# Allow overriding .env path via ENV_FILE; otherwise use project root .env (same as Bash)
+ENV_FILE = os.environ.get("ENV_FILE", os.path.join(PROJECT_ROOT, ".env"))
+if os.path.isfile(ENV_FILE):
+    load_dotenv(ENV_FILE)
+
+# Required DB config
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "3306"))
+DB_NAME = os.getenv("DB_NAME", "security_cameras")
+DB_USER = os.getenv("DB_USER", "securitycam")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+
+# Paths
+MEDIA_ROOT = os.getenv("MEDIA_ROOT", "/mnt/sdcard/security_camera/security_footage")
+
+# Worker & backoff configuration
+CONCURRENCY = int(os.getenv("CONVERT_CONCURRENCY", "2"))
+BACKOFF_MIN_SECONDS = float(os.getenv("BACKOFF_MIN_SECONDS", "0.5"))
+BACKOFF_MAX_SECONDS = float(os.getenv("BACKOFF_MAX_SECONDS", "7"))
+
+# Logging
+LOG_DIR = os.getenv("LOG_DIR", os.path.join(PROJECT_ROOT, "scripts", "logs"))
+LOGFILE = os.path.join(LOG_DIR, "mp4_conversion.log")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# Safety / behavior
+FFMPEG_BIN = os.getenv("FFMPEG_PATH", "ffmpeg")
+FFPROBE_BIN = os.getenv("FFPROBE_PATH", "ffprobe")
+
+# Claim metadata (for visibility)
+WORKER_ID = f"{os.uname().nodename}:{os.getpid()}"
+
+# ======================================================================================
+# PLAIN-TEXT LOGGER WITH DAILY ROTATION
+# ======================================================================================
+
+class PlainRotatingLogger:
+    """Plain text logger that rotates logs when the date changes. Keeps 6 backups."""
+    def __init__(self, logfile: str):
+        self.logfile = logfile
+        self._lock = threading.Lock()
+        self._current_day = date.today()
+        # Touch date file (in-memory only) and ensure file exists
+        os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
+        if not os.path.exists(self.logfile):
+            open(self.logfile, "a").close()
+
+    def _rotate_if_needed(self):
+        today = date.today()
+        if today != self._current_day:
+            # Perform rotation: .6 removed, .5 -> .6, ..., .1 -> .2, current -> .1
+            base = self.logfile
+            with self._lock:
+                # Double-check under lock
+                if today != self._current_day:
+                    try:
+                        for i in range(6, 0, -1):
+                            src = f"{base}.{i}" if i > 0 else base
+                            dst = f"{base}.{i+1}"
+                            if i == 6 and os.path.exists(src):
+                                os.remove(src)
+                            elif os.path.exists(src):
+                                os.rename(src, dst)
+                        if os.path.exists(base):
+                            os.rename(base, f"{base}.1")
+                    except Exception:
+                        # If rotation fails, we still continue (don’t block conversions)
+                        pass
+                    finally:
+                        # Touch fresh current log
+                        open(base, "a").close()
+                        self._current_day = today
+
+    def log(self, msg: str):
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{ts}] {msg}\n"
+        with self._lock:
+            self._rotate_if_needed()
+            with open(self.logfile, "a", encoding="utf-8") as f:
+                f.write(line)
+        # Also echo to stdout for journalctl/systemd visibility
+        try:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+        except Exception:
+            pass
+
+
+logger = PlainRotatingLogger(LOGFILE)
+
+# ======================================================================================
+# DATABASE
+# ======================================================================================
+
+def create_db_engine() -> Engine:
+    # Use PyMySQL driver under SQLAlchemy (consistent with your stack)
+    url = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+    # Reasonable pool defaults for a small daemon
+    engine = create_engine(
+        url,
+        pool_size=max(1, CONCURRENCY),   # at least 1, up to concurrency
+        max_overflow=CONCURRENCY,        # allow brief bursts
+        pool_pre_ping=True,
+        pool_recycle=3600,               # recycle hourly
+        echo=False,
+    )
+    return engine
+
+
+engine = create_db_engine()
+
+# ======================================================================================
+# UTILS
+# ======================================================================================
+
+_stop_event = threading.Event()
+
+def handle_signal(signum, frame):
+    logger.log(f"Received signal {signum}; initiating graceful shutdown...")
+    _stop_event.set()
+
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
+
+def path_join_media(relative_path: str) -> str:
+    rel = relative_path.lstrip("/").replace("..", "")
+    return os.path.join(MEDIA_ROOT, rel)
+
+# ======================================================================================
+# CLAIM & FETCH
+# ======================================================================================
+
+CLAIM_SQL = text("""
+    UPDATE events
+    SET mp4_conversion_status = 'processing',
+        mp4_claimed_by = :worker_id,
+        mp4_claimed_at = NOW(6)
+    WHERE id = :candidate_id
+      AND video_transferred = 1
+      AND mp4_conversion_status = 'pending'
+      AND video_h264_path IS NOT NULL
+      AND video_h264_path != ''
+    LIMIT 1
+""")
+
+SELECT_ONE_PENDING_CANDIDATE_SQL = text("""
+    SELECT id
+    FROM events
+    WHERE video_transferred = 1
+      AND mp4_conversion_status = 'pending'
+      AND video_h264_path IS NOT NULL
+      AND video_h264_path != ''
+    ORDER BY timestamp DESC
+    LIMIT 1
+""")
+
+FETCH_EVENT_SQL = text("""
+    SELECT id, camera_id, video_h264_path
+    FROM events
+    WHERE id = :event_id
+    LIMIT 1
+""")
+
+def claim_one_event(conn) -> Optional[int]:
+
+    """
+    Atomic CAS-style claim:
+    1) SELECT a candidate id
+    2) UPDATE ... WHERE id=:candidate AND mp4_conversion_status='pending'
+    If rowcount==1, we own it; else None.
+    """
+    result = conn.execute(SELECT_ONE_PENDING_CANDIDATE_SQL).first()
+    if not result:
+        return None
+    candidate_id = result[0]
+    upd = conn.execute(CLAIM_SQL, {"candidate_id": candidate_id, "worker_id": WORKER_ID})
+    if upd.rowcount == 1:
+        return candidate_id
+    return None
+
+# ======================================================================================
+# CONVERSION
+# ======================================================================================
+
+def ffmpeg_copy_container(h264_full: str, mp4_full: str) -> tuple[int, str]:
+    """
+    Run ffmpeg to repack H.264 elementary stream into MP4 container (no re-encode).
+    Returns (return_code, aggregated_stderr).
+    Uses a temp file to avoid partial/corrupt outputs if interrupted.
+    """
+    tmp_out = f"{mp4_full}.tmp"
+    # Ensure target directory exists
+    os.makedirs(os.path.dirname(mp4_full), exist_ok=True)
+
+    cmd = [
+        FFMPEG_BIN,
+        "-hide_banner",
+        "-loglevel", "error",
+        "-threads", "2",
+        "-i", h264_full,
+        "-c", "copy",
+        "-movflags", "faststart",
+        "-f", "mp4",        # ✅ Force output format to MP4
+        "-y",
+        tmp_out
+    ]
+
+
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode == 0:
+            # Atomic finalize
+            os.replace(tmp_out, mp4_full)
+        else:
+            # Cleanup tmp on failure
+            if os.path.exists(tmp_out):
+                os.remove(tmp_out)
+        return proc.returncode, (proc.stderr or "").strip()
+    except FileNotFoundError:
+        return 127, "ffmpeg not found"
+    except Exception as e:
+        # Best effort cleanup
+        try:
+            if os.path.exists(tmp_out):
+                os.remove(tmp_out)
+        except Exception:
+            pass
+        return 1, f"Exception: {e}"
+
+def ffprobe_duration_seconds(mp4_full: str) -> Optional[int]:
+    """
+    Use ffprobe to get duration (seconds, rounded). Returns None if unavailable.
+    """
+    cmd = [
+        FFPROBE_BIN,
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        mp4_full
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode == 0 and proc.stdout.strip():
+            try:
+                dur = float(proc.stdout.strip())
+                return int(round(dur))
+            except ValueError:
+                return None
+        return None
+    except FileNotFoundError:
+        return None
+
+# ======================================================================================
+# DB STATUS UPDATES
+# ======================================================================================
+
+SET_FAILED_SQL = text("""
+    UPDATE events
+    SET mp4_conversion_status = 'failed',
+        status = 'failed'
+    WHERE id = :event_id
+    LIMIT 1
+""")
+
+SET_PROCESSING_SQL = text("""
+    UPDATE events
+    SET mp4_conversion_status = 'processing'
+    WHERE id = :event_id
+    LIMIT 1
+""")
+
+SET_COMPLETE_SQL = text("""
+    UPDATE events
+    SET mp4_conversion_status = 'complete',
+        status = 'complete',
+        video_mp4_path = :mp4_rel,
+        video_duration = :duration,
+        mp4_converted_at = NOW(6)
+    WHERE id = :event_id
+    LIMIT 1
+""")
+
+# ======================================================================================
+# WORKER TASK
+# ======================================================================================
+
+def process_event(event_id: int, engine: Engine):
+    """
+    Full lifecycle for a single event:
+    - Fetch fields
+    - Validate file exists, age, permissions
+    - Convert -> MP4 (tmp -> atomic rename)
+    - ffprobe duration
+    - DB update complete (or failed)
+    - Delete .h264 if MP4 exists and non-empty
+    """
+    try:
+        with engine.begin() as conn:
+            row = conn.execute(FETCH_EVENT_SQL, {"event_id": event_id}).first()
+            if not row:
+                logger.log(f"Event {event_id}: Not found after claim (skipping)")
+                return
+
+            _id, camera_id, h264_rel = row
+            h264_full = path_join_media(h264_rel)
+            mp4_rel = h264_rel[:-5] + ".mp4" if h264_rel.endswith(".h264") else h264_rel + ".mp4"
+            mp4_full = path_join_media(mp4_rel)
+
+        # Validate source file
+        if not os.path.isfile(h264_full):
+            logger.log(f"Event {event_id}: H.264 file not found: {h264_full}")
+            with engine.begin() as conn:
+                conn.execute(SET_FAILED_SQL, {"event_id": event_id})
+            return
+
+        if not os.access(h264_full, os.R_OK):
+            logger.log(f"Event {event_id}: No read permission for H.264 file: {h264_full}")
+            with engine.begin() as conn:
+                conn.execute(SET_FAILED_SQL, {"event_id": event_id})
+            return
+
+        target_dir = os.path.dirname(mp4_full)
+        if not os.path.isdir(target_dir):
+            try:
+                os.makedirs(target_dir, exist_ok=True)
+            except Exception:
+                logger.log(f"Event {event_id}: Cannot create directory: {target_dir}")
+                with engine.begin() as conn:
+                    conn.execute(SET_FAILED_SQL, {"event_id": event_id})
+                return
+
+        if not os.access(target_dir, os.W_OK):
+            logger.log(f"Event {event_id}: No write permission for directory: {target_dir}")
+            with engine.begin() as conn:
+                conn.execute(SET_FAILED_SQL, {"event_id": event_id})
+            return
+
+        # Check for .READY sentinel file to ensure transfer is complete
+        # The transfer manager creates this sentinel after successfully moving the H.264 file
+        sentinel_path = h264_full + ".READY"
+        if not os.path.exists(sentinel_path):
+            logger.log(f"Event {event_id}: Waiting for transfer completion (no .READY sentinel), deferring")
+            # Set back to pending so it will be picked up again next loop
+            with engine.begin() as conn:
+                conn.execute(text("""
+                    UPDATE events
+                    SET mp4_conversion_status = 'pending'
+                    WHERE id = :event_id
+                    LIMIT 1
+                """), {"event_id": event_id})
+            # Sleep to avoid hot loop when waiting for transfer
+            time.sleep(2.0)
+            return
+
+        logger.log(f"Event {event_id}: Converting {h264_rel} -> {mp4_rel}")
+
+        rc, fferr = ffmpeg_copy_container(h264_full, mp4_full)
+
+        if fferr:
+            for line in fferr.splitlines():
+                logger.log(f"  ffmpeg: {line}")
+
+        if rc == 0 and os.path.isfile(mp4_full):
+            # Determine duration (best effort)
+            dur = ffprobe_duration_seconds(mp4_full) or 60
+            with engine.begin() as conn:
+                conn.execute(SET_COMPLETE_SQL, {
+                    "event_id": event_id,
+                    "mp4_rel": mp4_rel,
+                    "duration": int(dur)
+                })
+            logger.log(f"✅ Event {event_id}: Conversion successful (duration: {int(dur)}s)")
+
+            # Delete original .h264 if MP4 has content
+            try:
+                if os.path.getsize(mp4_full) > 0 and os.access(h264_full, os.W_OK):
+                    os.remove(h264_full)
+                    logger.log(f"Event {event_id}: Deleted H.264 after successful conversion")
+                    # Also remove the .READY sentinel file
+                    sentinel_path = h264_full + ".READY"
+                    if os.path.exists(sentinel_path):
+                        os.remove(sentinel_path)
+                        logger.log(f"Event {event_id}: Deleted .READY sentinel")
+                elif os.path.getsize(mp4_full) == 0:
+                    logger.log(f"Event {event_id}: ⚠️  MP4 is empty; keeping H.264")
+            except Exception as e:
+                logger.log(f"Event {event_id}: ⚠️  Could not delete H.264: {e}")
+
+        else:
+            with engine.begin() as conn:
+                conn.execute(SET_FAILED_SQL, {"event_id": event_id})
+            logger.log(f"❌ Event {event_id}: Conversion failed (rc={rc})")
+
+    except SQLAlchemyError as db_err:
+        logger.log(f"❌ Event {event_id}: DB error during processing: {db_err}")
+    except Exception as e:
+        logger.log(f"❌ Event {event_id}: Unexpected error: {e}")
+
+# ======================================================================================
+# MAIN LOOP
+# ======================================================================================
+
+def run_daemon():
+    logger.log("=== MP4 Converter: starting up ===")
+    logger.log(f"Config: CONCURRENCY={CONCURRENCY}, BACKOFF=[{BACKOFF_MIN_SECONDS}..{BACKOFF_MAX_SECONDS}]s")
+    backoff = BACKOFF_MIN_SECONDS
+
+    # ThreadPool for conversions
+    with ThreadPoolExecutor(max_workers=CONCURRENCY, thread_name_prefix="mp4w") as pool:
+        # Track running futures
+        running = set()
+
+        while not _stop_event.is_set():
+            # Reap completed tasks quickly
+            done_now = [f for f in running if f.done()]
+            for f in done_now:
+                running.remove(f)
+                # ensure exceptions are surfaced in logs
+                try:
+                    f.result()
+                except Exception as e:
+                    logger.log(f"Worker exception: {e}")
+
+            # Fill available slots by claiming work
+            slots = CONCURRENCY - len(running)
+            claimed_any = False
+
+            if slots > 0:
+                try:
+                    with engine.begin() as conn:
+                        for _ in range(slots):
+                            if _stop_event.is_set():
+                                break
+                            event_id = claim_one_event(conn)
+                            if event_id is None:
+                                break
+                            # We claimed one — fetch is inside worker
+                            claimed_any = True
+                            fut = pool.submit(process_event, event_id, engine)
+                            running.add(fut)
+                except SQLAlchemyError as e:
+                    logger.log(f"DB error while claiming work: {e}")
+                    # Mild sleep to avoid hammering DB on persistent outage
+                    time.sleep(min(2.0, BACKOFF_MAX_SECONDS))
+
+            # Backoff handling
+            if claimed_any:
+                backoff = BACKOFF_MIN_SECONDS
+            else:
+                # No work claimed; idle a bit
+                time.sleep(backoff)
+                backoff = min(BACKOFF_MAX_SECONDS, backoff * 2 if backoff < BACKOFF_MAX_SECONDS else BACKOFF_MAX_SECONDS)
+
+        # Shutdown: wait for in-flight tasks to complete
+        if running:
+            logger.log(f"Shutdown: waiting for {len(running)} in-flight conversion(s) to finish...")
+            for f in as_completed(running):
+                try:
+                    f.result()
+                except Exception as e:
+                    logger.log(f"Worker exception during shutdown: {e}")
+
+    logger.log("=== MP4 Converter: clean shutdown ===")
+
+
+if __name__ == "__main__":
+    try:
+        run_daemon()
+    except KeyboardInterrupt:
+        pass
