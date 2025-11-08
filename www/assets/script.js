@@ -287,11 +287,13 @@ function escapeHtml(text) {
 }
 
 /* ========================================
-   LIVE STREAMING CONTROL
+   LIVE STREAMING CONTROL WITH HEARTBEAT
    ======================================== */
 
 let streamInterval = null;
 let streamStartTime = null;
+let heartbeatInterval = null;
+const HEARTBEAT_INTERVAL_MS = 10000; // 10 seconds
 
 async function startStream() {
     const statusIndicator = document.getElementById('stream-status');
@@ -345,6 +347,9 @@ async function startStream() {
         streamStartTime = Date.now();
         startStreamTimer();
         
+        // Start heartbeat
+        startHeartbeat(cameraId);
+        
         // Show stream info with camera name
         streamInfo.innerHTML = '<strong>' + escapeHtml(cameraName) + '</strong> - Motion detection paused while streaming';
         
@@ -380,6 +385,9 @@ async function stopStream() {
         // Disable button
         streamButton.disabled = true;
         streamButton.textContent = 'Stopping...';
+        
+        // Stop heartbeat FIRST
+        stopHeartbeat();
         
         // Stop timer
         stopStreamTimer();
@@ -426,6 +434,91 @@ async function stopStream() {
     }
 }
 
+function startHeartbeat(cameraId) {
+    // Clear any existing heartbeat
+    stopHeartbeat();
+    
+    // Send heartbeat every 10 seconds
+    heartbeatInterval = setInterval(async () => {
+        try {
+            const response = await fetch('api/set_streaming.php?action=heartbeat&camera=' + cameraId);
+            const data = await response.json();
+            
+            if (!response.ok || !data.success) {
+                // Heartbeat failed - stream may have timed out or hit max duration
+                console.warn('Heartbeat failed:', data.message);
+                
+                // Check if max duration exceeded
+                if (data.max_duration_exceeded) {
+                    console.log('Stream exceeded maximum duration, cleaning up UI');
+                    // Stop heartbeat and clean up UI
+                    stopHeartbeat();
+                    await handleStreamStopped('Maximum stream duration (30 minutes) reached. Stream automatically stopped.');
+                } else {
+                    // Other error - log but keep trying
+                    console.error('Heartbeat error:', data.message);
+                }
+            } else {
+                // Heartbeat successful - optionally log elapsed time
+                if (data.elapsed_seconds && data.elapsed_seconds % 60 === 0) {
+                    console.log('Stream running for ' + Math.floor(data.elapsed_seconds / 60) + ' minutes');
+                }
+            }
+        } catch (error) {
+            console.error('Error sending heartbeat:', error);
+            // Network error - camera might be down, but keep trying
+        }
+    }, HEARTBEAT_INTERVAL_MS);
+    
+    console.log('Heartbeat started (every ' + (HEARTBEAT_INTERVAL_MS / 1000) + ' seconds)');
+}
+
+function stopHeartbeat() {
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+        console.log('Heartbeat stopped');
+    }
+}
+
+async function handleStreamStopped(message) {
+    // Update UI to reflect that stream has stopped
+    const statusIndicator = document.getElementById('stream-status');
+    const statusText = document.getElementById('stream-status-text');
+    const streamButton = document.getElementById('stream-button');
+    const streamImage = document.getElementById('stream-image');
+    const streamPlaceholder = document.getElementById('stream-placeholder');
+    const streamInfo = document.getElementById('stream-info');
+    
+    // Stop timer
+    stopStreamTimer();
+    
+    // Hide stream
+    streamImage.style.display = 'none';
+    streamImage.src = '';
+    streamPlaceholder.style.display = 'flex';
+    
+    // Update status
+    statusIndicator.classList.remove('status-active');
+    statusIndicator.classList.add('status-inactive');
+    statusText.textContent = 'Stopped';
+    
+    // Update button
+    streamButton.textContent = 'Start Stream';
+    streamButton.disabled = false;
+    streamButton.classList.remove('btn-error');
+    streamButton.classList.add('btn-success');
+    streamButton.onclick = startStream;
+    
+    // Clear info
+    streamInfo.textContent = '';
+    
+    // Notify user
+    if (message) {
+        alert(message);
+    }
+}
+
 function startStreamTimer() {
     stopStreamTimer(); // Clear any existing timer
     
@@ -456,26 +549,282 @@ function stopStreamTimer() {
     }
 }
 
-// Cleanup on page unload
+// Cleanup on page unload - use sendBeacon for more reliable cleanup
 window.addEventListener('beforeunload', function(e) {
-    // Stop stream if active
     const streamImage = document.getElementById('stream-image');
     const streamContainer = document.getElementById('stream-container');
     
+    // Check if stream is active
     if (streamImage && streamImage.style.display !== 'none' && streamContainer) {
         const cameraId = streamContainer.dataset.cameraId;
         
-        // Use synchronous request for cleanup
-        const xhr = new XMLHttpRequest();
-        xhr.open('GET', 'api/set_streaming.php?action=stop&camera=' + cameraId, false); // false = synchronous
-        xhr.send();
+        // Stop heartbeat immediately
+        stopHeartbeat();
+        
+        // Use sendBeacon for more reliable cleanup (non-blocking)
+        const url = 'api/set_streaming.php?action=stop&camera=' + cameraId;
+        
+        // Try sendBeacon first (preferred for page unload)
+        if (navigator.sendBeacon) {
+            // sendBeacon only supports POST with specific content types
+            // Our PHP script expects GET parameters, so we need to send as POST with URL params
+            navigator.sendBeacon(url);
+        } else {
+            // Fallback to synchronous XHR (deprecated but more reliable than async on unload)
+            try {
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', url, false); // false = synchronous
+                xhr.send();
+            } catch (error) {
+                console.error('Error in cleanup:', error);
+            }
+        }
     }
 });
 
-// Auto-start stream on page load
+// Handle camera selector change - stop stream before switching
 document.addEventListener('DOMContentLoaded', function() {
-    // Check if we're on the live view page
+    const cameraSelect = document.getElementById('camera-select');
+    
+    if (cameraSelect) {
+        // Intercept form submission to stop stream first
+        cameraSelect.form.addEventListener('submit', async function(e) {
+            const streamImage = document.getElementById('stream-image');
+            const streamContainer = document.getElementById('stream-container');
+            
+            // Check if stream is active
+            if (streamImage && streamImage.style.display !== 'none' && streamContainer) {
+                e.preventDefault(); // Prevent immediate form submission
+                
+                const cameraId = streamContainer.dataset.cameraId;
+                
+                // Stop heartbeat
+                stopHeartbeat();
+                
+                // Stop stream via AJAX
+                try {
+                    const response = await fetch('api/set_streaming.php?action=stop&camera=' + cameraId);
+                    await response.json(); // Wait for response but don't check - best effort
+                } catch (error) {
+                    console.error('Error stopping stream during camera switch:', error);
+                }
+                
+                // Now submit the form
+                this.submit();
+            }
+            // If stream not active, allow normal form submission
+        });
+    }
+    
+    // Auto-start stream on page load
     if (document.getElementById('stream-container')) {
         startStream();
     }
+});
+
+
+/* ========================================
+   FOOTER CAMERA STATUS - JavaScript
+   ======================================== */
+
+/**
+ * Show camera details modal
+ * @param {HTMLElement} element - The clicked camera status item
+ */
+function showCameraDetails(element) {
+    try {
+        // Get camera data from data attribute
+        const cameraData = JSON.parse(element.getAttribute('data-camera'));
+        
+        // Build modal content
+        const modalBody = document.getElementById('camera-details-body');
+        const modalTitle = document.getElementById('modal-title');
+        
+        modalTitle.textContent = cameraData.name;
+        
+        // Status badge HTML
+        let statusBadge = '';
+        if (cameraData.status === 'online') {
+            statusBadge = '<span class="status-badge online"><span class="indicator">●</span> Online</span>';
+        } else if (cameraData.status === 'offline') {
+            statusBadge = '<span class="status-badge offline"><span class="indicator">●</span> Offline</span>';
+        } else if (cameraData.status === 'error') {
+            statusBadge = '<span class="status-badge error"><span class="indicator">●</span> Error</span>';
+        }
+        
+        // Build details HTML
+        modalBody.innerHTML = `
+            <div class="detail-row">
+                <span class="detail-label">Status</span>
+                <span class="detail-value">${statusBadge}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Camera ID</span>
+                <span class="detail-value">${escapeHtml(cameraData.camera_id)}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Location</span>
+                <span class="detail-value">${escapeHtml(cameraData.location)}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">IP Address</span>
+                <span class="detail-value">${escapeHtml(cameraData.ip_address)}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Version</span>
+                <span class="detail-value">${escapeHtml(cameraData.version)}</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Uptime</span>
+                <span class="detail-value">${escapeHtml(cameraData.uptime)}</span>
+            </div>
+        `;
+        
+        // Show modal
+        const modal = document.getElementById('camera-details-modal');
+        modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
+        
+        // Focus management for accessibility
+        modal.querySelector('.modal-close').focus();
+        
+        // Prevent body scroll when modal is open
+        document.body.style.overflow = 'hidden';
+        
+    } catch (error) {
+        console.error('Error showing camera details:', error);
+    }
+}
+
+/**
+ * Close camera details modal
+ */
+function closeCameraDetails() {
+    const modal = document.getElementById('camera-details-modal');
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+    
+    // Restore body scroll
+    document.body.style.overflow = '';
+}
+
+/**
+ * Refresh camera status via AJAX
+ */
+async function refreshCameraStatus() {
+    const refreshBtn = document.getElementById('refresh-status');
+    
+    if (!refreshBtn) return;
+    
+    try {
+        // Disable button and show loading state
+        refreshBtn.disabled = true;
+        refreshBtn.classList.add('refreshing');
+        
+        // Call refresh API
+        const response = await fetch('/api/refresh_camera_status.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            // Update camera status in footer
+            updateCameraStatusDisplay(data.cameras);
+            
+            // Update button title with new cache time
+            refreshBtn.setAttribute('title', 'Refresh camera status (last updated 0s ago)');
+        } else {
+            throw new Error(data.message || 'Failed to refresh camera status');
+        }
+        
+    } catch (error) {
+        console.error('Error refreshing camera status:', error);
+        alert('Failed to refresh camera status. Please try again.');
+    } finally {
+        // Re-enable button and remove loading state
+        refreshBtn.disabled = false;
+        refreshBtn.classList.remove('refreshing');
+    }
+}
+
+/**
+ * Update camera status display with fresh data
+ * @param {Array} cameras - Array of camera status objects
+ */
+function updateCameraStatusDisplay(cameras) {
+    const statusGrid = document.querySelector('.camera-status-grid');
+    
+    if (!statusGrid) return;
+    
+    // Clear existing items
+    statusGrid.innerHTML = '';
+    
+    if (!cameras || cameras.length === 0) {
+        statusGrid.innerHTML = '<div class="camera-status-item status-none"><span class="camera-name">No cameras deployed</span></div>';
+        return;
+    }
+    
+    // Add updated camera status items
+    cameras.forEach(cam => {
+        const item = document.createElement('div');
+        item.className = `camera-status-item status-${cam.status}`;
+        item.setAttribute('data-camera', JSON.stringify(cam));
+        item.setAttribute('onclick', 'showCameraDetails(this)');
+        item.setAttribute('role', 'button');
+        item.setAttribute('tabindex', '0');
+        item.setAttribute('title', 'Click for details');
+        
+        item.innerHTML = `
+            <span class="camera-name">${escapeHtml(cam.name)}</span>
+            <span class="camera-indicator">●</span>
+            <span class="camera-version">v${escapeHtml(cam.version)}</span>
+        `;
+        
+        statusGrid.appendChild(item);
+    });
+}
+
+/**
+ * Initialize footer camera status functionality
+ */
+function initFooterCameraStatus() {
+    // Attach refresh button handler
+    const refreshBtn = document.getElementById('refresh-status');
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', refreshCameraStatus);
+    }
+    
+    // Close modal on Escape key
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            const modal = document.getElementById('camera-details-modal');
+            if (modal && modal.classList.contains('active')) {
+                closeCameraDetails();
+            }
+        }
+    });
+    
+    // Make camera status items keyboard accessible
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+            const target = e.target;
+            if (target && target.classList.contains('camera-status-item') && target.hasAttribute('data-camera')) {
+                e.preventDefault();
+                showCameraDetails(target);
+            }
+        }
+    });
+}
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    initFooterCameraStatus();
 });
