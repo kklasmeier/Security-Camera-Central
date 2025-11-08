@@ -1,7 +1,7 @@
 import requests
 import json
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import sys
 
 
@@ -113,7 +113,7 @@ class TestEventQueries:
         
         return len(self.created_event_ids) >= 8
     
-    def _create_event(self, timestamp: datetime, motion_score: float) -> int:
+    def _create_event(self, timestamp: datetime, motion_score: float) -> Optional[int]:
         """Helper to create a single event"""
         try:
             response = requests.post(

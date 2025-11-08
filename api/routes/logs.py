@@ -174,8 +174,12 @@ def get_logs(
         
         logger.info(f"Returning {len(logs)} logs (total: {total}, source: {source}, level: {level}, after: {after})")
         
+        # Convert SQLAlchemy Log objects to Pydantic LogResponse objects
+        # This ensures the types match LogListResponse (List[LogResponse])
+        logs_out = [LogResponse.from_orm(l) for l in logs]
+        
         return LogListResponse(
-            logs=logs,
+            logs=logs_out,
             total=total,
             limit=limit,
             offset=offset

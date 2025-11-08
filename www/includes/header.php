@@ -20,9 +20,11 @@ $page_title = isset($page_title) ? $page_title : 'Security Camera System';
     <header class="site-header">
         <div class="header-container">
             <div class="logo">
-                <img src="/assets/camera-logo.png" alt="Camera" class="logo-icon" style="width: 32px; height: 32px; vertical-align: middle;">
-                <span class="logo-text-full">Security Camera System</span>
-                <span class="logo-text-short">Sec Cam</span>
+                <a href="/index.php" class="logo-link">
+                    <img src="/assets/camera-logo.png" alt="Camera" class="logo-icon" style="width: 32px; height: 32px; vertical-align: middle;">
+                    <span class="logo-text-full">Security Camera System</span>
+                    <span class="logo-text-short">Sec Cam</span>
+                </a>
             </div>
             
             <button class="hamburger" id="hamburger" aria-label="Toggle navigation">

@@ -286,8 +286,11 @@ def list_events(
         
         logger.info(f"Returning {len(events)} events (total: {total}, limit: {limit}, offset: {offset})")
         
+        # Convert ORM Event objects to Pydantic EventResponse objects so types match
+        events_resp = [EventResponse.from_orm(e) for e in events]
+        
         return EventListResponse(
-            events=events,
+            events=events_resp,
             total=total,
             limit=limit,
             offset=offset

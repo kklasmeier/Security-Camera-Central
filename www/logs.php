@@ -50,7 +50,7 @@ $logs = [];
 $no_filters_selected = empty($level_filter);
 
 if (!$no_filters_selected) {
-    $logs = $db->get_logs(1000, 0, $level_filter, 'ASC', $source_filter);
+    $logs = $db->get_logs(1000, 0, $level_filter, 'DESC', $source_filter);
     
     // DEBUG
     echo "<!-- DEBUG: After query, log count=" . count($logs) . " -->";

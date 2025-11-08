@@ -225,7 +225,10 @@ include 'includes/header.php';
                     src="<?php echo $image_a_url; ?>" 
                     alt="Picture A - Motion Detection"
                     class="event-image"
-                    onclick="openLightbox('<?php echo $image_a_url; ?>')"
+                    data-lightbox-index="0"
+                    data-lightbox-src="<?php echo $image_a_url; ?>"
+                    data-lightbox-title="Picture A (Motion Detection)"
+                    onclick="openLightbox(0)"
                 >
             <?php else: ?>
                 <div class="image-placeholder">Image not available</div>
@@ -240,7 +243,10 @@ include 'includes/header.php';
                     src="<?php echo $image_b_url; ?>" 
                     alt="Picture B - T+4 seconds"
                     class="event-image"
-                    onclick="openLightbox('<?php echo $image_b_url; ?>')"
+                    data-lightbox-index="1"
+                    data-lightbox-src="<?php echo $image_b_url; ?>"
+                    data-lightbox-title="Picture B (T+4 seconds)"
+                    onclick="openLightbox(1)"
                 >
             <?php else: ?>
                 <div class="image-placeholder">Image not available</div>
@@ -279,7 +285,108 @@ include 'includes/header.php';
 <!-- Lightbox for full-screen images -->
 <div id="lightbox" class="lightbox" onclick="closeLightbox()">
     <span class="lightbox-close" onclick="closeLightbox()">✕</span>
-    <img id="lightbox-image" src="" alt="Full size image">
+    <button class="lightbox-nav lightbox-prev" onclick="event.stopPropagation(); navigateLightbox(-1)">‹</button>
+    <button class="lightbox-nav lightbox-next" onclick="event.stopPropagation(); navigateLightbox(1)">›</button>
+    <div class="lightbox-title" id="lightbox-title"></div>
+    <img id="lightbox-image" src="" alt="Full size image" onclick="event.stopPropagation()">
 </div>
+
+<script>
+// Lightbox state
+let currentLightboxIndex = 0;
+let lightboxImages = [];
+
+// Initialize lightbox images array
+function initializeLightboxImages() {
+    if (lightboxImages.length === 0) {
+        const images = document.querySelectorAll('[data-lightbox-index]');
+        console.log('Found images:', images.length); // Debug
+        images.forEach(img => {
+            const index = parseInt(img.dataset.lightboxIndex);
+            const src = img.dataset.lightboxSrc;
+            const title = img.dataset.lightboxTitle;
+            console.log('Adding image:', index, src, title); // Debug
+            lightboxImages[index] = {
+                src: src,
+                title: title
+            };
+        });
+        console.log('Initialized lightboxImages:', lightboxImages); // Debug
+    }
+}
+
+function openLightbox(index) {
+    console.log('Opening lightbox with index:', index); // Debug
+    initializeLightboxImages(); // Ensure images are loaded
+    currentLightboxIndex = index;
+    updateLightboxImage();
+    document.getElementById('lightbox').style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox() {
+    document.getElementById('lightbox').style.display = 'none';
+    document.body.style.overflow = 'auto';
+}
+
+function navigateLightbox(direction) {
+    currentLightboxIndex = (currentLightboxIndex + direction + lightboxImages.length) % lightboxImages.length;
+    console.log('Navigating to index:', currentLightboxIndex); // Debug
+    updateLightboxImage();
+}
+
+function updateLightboxImage() {
+    const imageData = lightboxImages[currentLightboxIndex];
+    console.log('Updating image with data:', imageData); // Debug
+    if (imageData && imageData.src) {
+        document.getElementById('lightbox-image').src = imageData.src;
+        document.getElementById('lightbox-title').textContent = imageData.title;
+    } else {
+        console.error('No image data found for index:', currentLightboxIndex);
+    }
+}
+
+// Keyboard navigation
+document.addEventListener('keydown', function(e) {
+    const lightbox = document.getElementById('lightbox');
+    if (lightbox.style.display === 'flex') {
+        if (e.key === 'ArrowLeft') {
+            navigateLightbox(-1);
+        } else if (e.key === 'ArrowRight') {
+            navigateLightbox(1);
+        } else if (e.key === 'Escape') {
+            closeLightbox();
+        }
+    }
+});
+
+// Touch/swipe support
+let touchStartX = 0;
+let touchEndX = 0;
+
+document.getElementById('lightbox')?.addEventListener('touchstart', function(e) {
+    touchStartX = e.changedTouches[0].screenX;
+}, false);
+
+document.getElementById('lightbox')?.addEventListener('touchend', function(e) {
+    touchEndX = e.changedTouches[0].screenX;
+    handleSwipe();
+}, false);
+
+function handleSwipe() {
+    const swipeThreshold = 50;
+    const diff = touchStartX - touchEndX;
+    
+    if (Math.abs(diff) > swipeThreshold) {
+        if (diff > 0) {
+            // Swiped left - go to next image
+            navigateLightbox(1);
+        } else {
+            // Swiped right - go to previous image
+            navigateLightbox(-1);
+        }
+    }
+}
+</script>
 
 <?php include 'includes/footer.php'; ?>

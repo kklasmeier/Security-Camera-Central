@@ -38,68 +38,120 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-/* ========================================
-   LIGHTBOX FOR EVENT DETAIL PAGE
-   ======================================== */
+// ============================================
+// LIGHTBOX WITH SWIPE NAVIGATION
+// ============================================
 
-/**
- * Open lightbox with full-screen image
- * @param {string} imageSrc - URL of the image to display
- */
-function openLightbox(imageSrc) {
-    const lightbox = document.getElementById('lightbox');
-    const lightboxImage = document.getElementById('lightbox-image');
-    
-    if (!lightbox || !lightboxImage) {
-        console.error('Lightbox elements not found');
-        return;
-    }
-    
-    lightboxImage.src = imageSrc;
-    lightbox.style.display = 'flex';
-    
-    // Prevent body scrolling when lightbox is open
-    document.body.style.overflow = 'hidden';
-}
+// Lightbox state
+let currentLightboxIndex = 0;
+let lightboxImages = [];
 
-/**
- * Close the lightbox and restore page scrolling
- */
-function closeLightbox() {
-    const lightbox = document.getElementById('lightbox');
-    
-    if (!lightbox) {
-        return;
-    }
-    
-    lightbox.style.display = 'none';
-    
-    // Restore body scrolling
-    document.body.style.overflow = 'auto';
-}
-
-/**
- * Close lightbox when Escape key is pressed
- */
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape' || e.key === 'Esc') {
-        closeLightbox();
-    }
-});
-
-/**
- * Prevent lightbox from closing when clicking on the image itself
- * (only close when clicking the dark background)
- */
-document.addEventListener('DOMContentLoaded', function() {
-    const lightboxImage = document.getElementById('lightbox-image');
-    
-    if (lightboxImage) {
-        lightboxImage.addEventListener('click', function(e) {
-            e.stopPropagation();
+// Initialize lightbox images array
+function initializeLightboxImages() {
+    if (lightboxImages.length === 0) {
+        const images = document.querySelectorAll('[data-lightbox-index]');
+        images.forEach(img => {
+            const index = parseInt(img.dataset.lightboxIndex);
+            lightboxImages[index] = {
+                src: img.dataset.lightboxSrc,
+                title: img.dataset.lightboxTitle
+            };
         });
     }
+}
+
+// Open lightbox with specific image index
+function openLightbox(index) {
+    initializeLightboxImages();
+    currentLightboxIndex = index;
+    updateLightboxImage();
+    const lightbox = document.getElementById('lightbox');
+    if (lightbox) {
+        lightbox.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+    }
+}
+
+// Close lightbox
+function closeLightbox() {
+    const lightbox = document.getElementById('lightbox');
+    if (lightbox) {
+        lightbox.style.display = 'none';
+        document.body.style.overflow = 'auto';
+    }
+}
+
+// Navigate between images (direction: -1 for previous, 1 for next)
+function navigateLightbox(direction) {
+    currentLightboxIndex = (currentLightboxIndex + direction + lightboxImages.length) % lightboxImages.length;
+    updateLightboxImage();
+}
+
+// Update the displayed image and title
+function updateLightboxImage() {
+    const imageData = lightboxImages[currentLightboxIndex];
+    if (imageData && imageData.src) {
+        const lightboxImage = document.getElementById('lightbox-image');
+        const lightboxTitle = document.getElementById('lightbox-title');
+        
+        if (lightboxImage) {
+            lightboxImage.src = imageData.src;
+        }
+        if (lightboxTitle) {
+            lightboxTitle.textContent = imageData.title;
+        }
+    }
+}
+
+// Keyboard navigation
+document.addEventListener('keydown', function(e) {
+    const lightbox = document.getElementById('lightbox');
+    if (lightbox && lightbox.style.display === 'flex') {
+        if (e.key === 'ArrowLeft') {
+            navigateLightbox(-1);
+        } else if (e.key === 'ArrowRight') {
+            navigateLightbox(1);
+        } else if (e.key === 'Escape') {
+            closeLightbox();
+        }
+    }
 });
+
+// Touch/swipe support for mobile
+let touchStartX = 0;
+let touchEndX = 0;
+
+// Wait for DOM to be ready before adding touch listeners
+document.addEventListener('DOMContentLoaded', function() {
+    const lightbox = document.getElementById('lightbox');
+    
+    if (lightbox) {
+        lightbox.addEventListener('touchstart', function(e) {
+            touchStartX = e.changedTouches[0].screenX;
+        }, false);
+        
+        lightbox.addEventListener('touchend', function(e) {
+            touchEndX = e.changedTouches[0].screenX;
+            handleSwipe();
+        }, false);
+    }
+});
+
+function handleSwipe() {
+    const swipeThreshold = 50;
+    const diff = touchStartX - touchEndX;
+    
+    if (Math.abs(diff) > swipeThreshold) {
+        if (diff > 0) {
+            // Swiped left - go to next image
+            navigateLightbox(1);
+        } else {
+            // Swiped right - go to previous image
+            navigateLightbox(-1);
+        }
+    }
+}
+
 
 /* ========================================
    LOGS PAGE - AJAX FUNCTIONALITY
