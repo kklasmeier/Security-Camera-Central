@@ -246,7 +246,9 @@ def ffmpeg_copy_container(h264_full: str, mp4_full: str) -> tuple[int, str]:
 
 
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        # Add timeout to prevent hanging on corrupted files
+        # Timeout = 5 minutes (300 seconds) - generous for large files
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if proc.returncode == 0:
             # Atomic finalize
             os.replace(tmp_out, mp4_full)
@@ -255,6 +257,11 @@ def ffmpeg_copy_container(h264_full: str, mp4_full: str) -> tuple[int, str]:
             if os.path.exists(tmp_out):
                 os.remove(tmp_out)
         return proc.returncode, (proc.stderr or "").strip()
+    except subprocess.TimeoutExpired:
+        # ffmpeg hung - kill it and cleanup
+        if os.path.exists(tmp_out):
+            os.remove(tmp_out)
+        return 1, "ffmpeg timeout (5 minutes) - file may be corrupted"
     except FileNotFoundError:
         return 127, "ffmpeg not found"
     except Exception as e:
@@ -278,7 +285,8 @@ def ffprobe_duration_seconds(mp4_full: str) -> Optional[int]:
         mp4_full
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        # Add timeout to prevent hanging
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if proc.returncode == 0 and proc.stdout.strip():
             try:
                 dur = float(proc.stdout.strip())
@@ -286,7 +294,7 @@ def ffprobe_duration_seconds(mp4_full: str) -> Optional[int]:
             except ValueError:
                 return None
         return None
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
 
 # ======================================================================================
