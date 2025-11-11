@@ -20,10 +20,26 @@ define('VALID_CAMERAS', array('all', 'camera_1', 'camera_2', 'camera_3', 'camera
 /**
  * Start PHP session if not already started
  * Safe to call multiple times - prevents "session already started" errors
+ * Handles "headers already sent" gracefully
  * 
  * @return void
  */
 function session_start_if_needed() {
+    // Check if session is already active
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return;
+    }
+    
+    // Check if headers have already been sent
+    if (headers_sent($file, $line)) {
+        // Headers already sent - cannot start session
+        // This is not fatal for read-only operations
+        // Log the issue for debugging
+        error_log("Cannot start session - headers already sent in $file on line $line");
+        return;
+    }
+    
+    // Safe to start session
     if (session_status() === PHP_SESSION_NONE) {
         session_start();
     }
@@ -38,12 +54,15 @@ function session_start_if_needed() {
  * - No selection exists in session
  * - Session value is null or empty
  * - Session value is invalid/corrupted
+ * - Session couldn't be started (headers already sent)
  */
 function get_selected_camera() {
     session_start_if_needed();
     
-    // Check if session variable exists and is valid
-    if (isset($_SESSION['selected_camera']) && in_array($_SESSION['selected_camera'], VALID_CAMERAS)) {
+    // Check if session is active and variable exists
+    if (session_status() === PHP_SESSION_ACTIVE && 
+        isset($_SESSION['selected_camera']) && 
+        in_array($_SESSION['selected_camera'], VALID_CAMERAS)) {
         return $_SESSION['selected_camera'];
     }
     
@@ -63,9 +82,15 @@ function get_selected_camera() {
  * - empty string → 'all'
  * - non-string → 'all'
  * - invalid camera ID → 'all'
+ * - session not started → silently fail
  */
 function set_selected_camera($camera_id) {
     session_start_if_needed();
+    
+    // Only proceed if session is active
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return;
+    }
     
     // Handle special cases BEFORE setting session variable
     if ($camera_id === null || $camera_id === '' || !is_string($camera_id)) {
@@ -105,12 +130,17 @@ function is_all_cameras_selected() {
  * @return void
  * 
  * Ensures:
- * - Session is started
+ * - Session is started (if headers not sent)
  * - selected_camera is set to valid value
  * - Corrupted session values are reset to 'all'
  */
 function initialize_session() {
     session_start_if_needed();
+    
+    // Only proceed if session is active
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return;
+    }
     
     // Initialize selected_camera if not set
     if (!isset($_SESSION['selected_camera'])) {

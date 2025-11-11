@@ -113,13 +113,14 @@ function fetch_camera_status($camera) {
  * @return array Array of camera status information
  */
 function get_all_camera_status($force_refresh = false) {
-    session_start_if_needed();
-    
     // Cache duration: 5 minutes (300 seconds)
     $cache_duration = 300;
     
-    // Check if we have valid cached data
-    if (!$force_refresh && 
+    // Check if session is available (might not be if headers already sent)
+    $session_available = (session_status() === PHP_SESSION_ACTIVE);
+    
+    // Check if we have valid cached data (only if session available)
+    if ($session_available && !$force_refresh && 
         isset($_SESSION['camera_status']) && 
         isset($_SESSION['camera_status_time']) &&
         is_array($_SESSION['camera_status']) &&
@@ -139,9 +140,11 @@ function get_all_camera_status($force_refresh = false) {
         }
     }
     
-    // Cache results in session
-    $_SESSION['camera_status'] = $status;
-    $_SESSION['camera_status_time'] = time();
+    // Cache results in session (only if session available)
+    if ($session_available) {
+        $_SESSION['camera_status'] = $status;
+        $_SESSION['camera_status_time'] = time();
+    }
     
     return $status;
 }
@@ -152,7 +155,10 @@ function get_all_camera_status($force_refresh = false) {
  * @return int Seconds since last cache update, or 0 if no cache
  */
 function get_cache_age() {
-    session_start_if_needed();
+    // Check if session is available
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return 0;
+    }
     
     if (isset($_SESSION['camera_status_time'])) {
         return time() - $_SESSION['camera_status_time'];
@@ -168,7 +174,10 @@ function get_cache_age() {
  * @return void
  */
 function clear_camera_status_cache() {
-    session_start_if_needed();
+    // Check if session is available
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return;
+    }
     
     unset($_SESSION['camera_status']);
     unset($_SESSION['camera_status_time']);

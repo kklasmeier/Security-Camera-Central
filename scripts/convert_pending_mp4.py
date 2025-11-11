@@ -73,59 +73,33 @@ WORKER_ID = f"{os.uname().nodename}:{os.getpid()}"
 # PLAIN-TEXT LOGGER WITH DAILY ROTATION
 # ======================================================================================
 
-class PlainRotatingLogger:
-    """Plain text logger that rotates logs when the date changes. Keeps 6 backups."""
+class PlainLogger:
+    """Simplified plain-text logger (no rotation). Thread-safe and systemd-friendly."""
     def __init__(self, logfile: str):
         self.logfile = logfile
         self._lock = threading.Lock()
-        self._current_day = date.today()
-        # Touch date file (in-memory only) and ensure file exists
         os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
-        if not os.path.exists(self.logfile):
-            open(self.logfile, "a").close()
-
-    def _rotate_if_needed(self):
-        today = date.today()
-        if today != self._current_day:
-            # Perform rotation: .6 removed, .5 -> .6, ..., .1 -> .2, current -> .1
-            base = self.logfile
-            with self._lock:
-                # Double-check under lock
-                if today != self._current_day:
-                    try:
-                        for i in range(6, 0, -1):
-                            src = f"{base}.{i}" if i > 0 else base
-                            dst = f"{base}.{i+1}"
-                            if i == 6 and os.path.exists(src):
-                                os.remove(src)
-                            elif os.path.exists(src):
-                                os.rename(src, dst)
-                        if os.path.exists(base):
-                            os.rename(base, f"{base}.1")
-                    except Exception:
-                        # If rotation fails, we still continue (don’t block conversions)
-                        pass
-                    finally:
-                        # Touch fresh current log
-                        open(base, "a").close()
-                        self._current_day = today
+        # Ensure file exists
+        open(self.logfile, "a").close()
 
     def log(self, msg: str):
+        """Append timestamped message to log file and echo to stdout."""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{ts}] {msg}\n"
         with self._lock:
-            self._rotate_if_needed()
-            with open(self.logfile, "a", encoding="utf-8") as f:
-                f.write(line)
-        # Also echo to stdout for journalctl/systemd visibility
+            try:
+                with open(self.logfile, "a", encoding="utf-8") as f:
+                    f.write(line)
+            except Exception as e:
+                # Fallback: at least print to stderr
+                sys.stderr.write(f"[logger error] {e}\n")
         try:
             sys.stdout.write(line)
             sys.stdout.flush()
         except Exception:
             pass
 
-
-logger = PlainRotatingLogger(LOGFILE)
+logger = PlainLogger(LOGFILE)
 
 # ======================================================================================
 # DATABASE
@@ -481,14 +455,26 @@ def run_daemon():
                             event_id = claim_one_event(conn)
                             if event_id is None:
                                 break
-                            # We claimed one — fetch is inside worker
                             claimed_any = True
                             fut = pool.submit(process_event, event_id, engine)
                             running.add(fut)
+
                 except SQLAlchemyError as e:
-                    logger.log(f"DB error while claiming work: {e}")
-                    # Mild sleep to avoid hammering DB on persistent outage
-                    time.sleep(min(2.0, BACKOFF_MAX_SECONDS))
+                    # Database lost / stale connection — rebuild engine and retry later
+                    logger.log(f"DB connection lost or stale; recreating engine. Details: {e}")
+                    try:
+                        engine.dispose()
+                    except Exception as dispose_err:
+                        logger.log(f"Engine dispose failed (ignored): {dispose_err}")
+                    time.sleep(3)
+                    try:
+                        globals()["engine"] = create_db_engine()
+                        logger.log("Recreated database engine successfully.")
+                    except Exception as re_err:
+                        logger.log(f"Engine recreation failed: {re_err}")
+                        time.sleep(5)
+                    # Skip rest of loop so we don't increment backoff on DB errors
+                    continue
 
             # Backoff handling
             if claimed_any:
