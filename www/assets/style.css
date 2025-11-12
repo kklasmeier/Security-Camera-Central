@@ -1549,6 +1549,75 @@ tbody tr:last-child td {
     }
 }
 
+/* ========================================
+   EVENT Detail Page: AI ENHANCEMENTS - Event Detail Page
+   ======================================== */
+
+/* AI Phrase in Event Title */
+.event-ai-phrase {
+    font-weight: 400;
+    color: var(--color-text-secondary);
+    font-size: 0.85em;
+    display: inline;
+    word-wrap: break-word;
+}
+
+/* AI Description Container */
+.ai-description-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    width: 100%;
+    text-align: left;
+}
+
+.ai-description-text {
+    color: var(--color-text-primary);
+    line-height: 1.6;
+    transition: max-height 0.3s ease;
+    overflow: hidden;
+    text-align: left;
+}
+
+.ai-description-text.collapsed {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    max-height: 1.6em; /* 1 line height */
+}
+
+.ai-description-text.expanded {
+    display: block;
+    max-height: none;
+}
+
+/* Toggle Button */
+.ai-description-toggle {
+    background: none;
+    border: none;
+    color: var(--color-primary, #3b82f6);
+    font-size: var(--font-size-sm, 14px);
+    font-weight: 500;
+    cursor: pointer;
+    padding: var(--space-xs, 4px) 0;
+    text-align: left;
+    transition: color var(--transition-fast, 0.15s ease);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ai-description-toggle:hover {
+    color: var(--color-primary-hover, #2563eb);
+    text-decoration: underline;
+}
+
+.ai-description-toggle .toggle-icon {
+    display: inline-block;
+    transition: transform 0.3s ease;
+    font-size: 0.8em;
+}
+}
 
 /* ========================================
    LOGS PAGE

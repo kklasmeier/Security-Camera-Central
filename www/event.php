@@ -57,7 +57,12 @@ include 'includes/header.php';
     <div class="event-details-card">
         <div class="event-details-header">
             <div class="event-title-group">
-                <h1 class="event-id">Event #<?php echo $event_id; ?></h1>
+                <h1 class="event-id">
+                    Event #<?php echo $event_id; ?>
+                    <?php if (!empty($event['ai_phrase'])): ?>
+                        <span class="event-ai-phrase"> • <?php echo htmlspecialchars($event['ai_phrase']); ?></span>
+                    <?php endif; ?>
+                </h1>
                 <span class="event-camera-name">
                     <?php echo htmlspecialchars(get_camera_display_name($event['camera_id'], $db)); ?>
                 </span>
@@ -180,6 +185,25 @@ include 'includes/header.php';
                     <span class="transfer-badge transfer-pending">⏳ Transfer Pending</span>
                 <?php else: ?>
                     <span class="transfer-badge transfer-pending">⏳ Pending Conversion</span>
+                <?php endif; ?>
+            </span>
+        </div>
+        
+        <!-- AI Description -->
+        <div class="detail-item">
+            <span class="detail-label">Description:</span>
+            <span class="detail-value">
+                <?php if (!empty($event['ai_description'])): ?>
+                    <div class="ai-description-container">
+                        <div class="ai-description-text collapsed" id="ai-description-text">
+                            <?php echo htmlspecialchars($event['ai_description']); ?>
+                        </div>
+                        <button class="ai-description-toggle" id="ai-description-toggle" onclick="toggleDescription()">
+                            <span class="toggle-icon">▼</span> Show more
+                        </button>
+                    </div>
+                <?php else: ?>
+                    <span class="transfer-badge transfer-pending">⏳ AI analysis pending...</span>
                 <?php endif; ?>
             </span>
         </div>
@@ -385,6 +409,25 @@ function handleSwipe() {
             // Swiped right - go to previous image
             navigateLightbox(-1);
         }
+    }
+}
+
+// Toggle AI Description expansion
+function toggleDescription() {
+    const textElement = document.getElementById('ai-description-text');
+    const toggleButton = document.getElementById('ai-description-toggle');
+    const toggleIcon = toggleButton.querySelector('.toggle-icon');
+    
+    if (textElement.classList.contains('collapsed')) {
+        textElement.classList.remove('collapsed');
+        textElement.classList.add('expanded');
+        toggleIcon.textContent = '▲';
+        toggleButton.innerHTML = '<span class="toggle-icon">▲</span> Show less';
+    } else {
+        textElement.classList.remove('expanded');
+        textElement.classList.add('collapsed');
+        toggleIcon.textContent = '▼';
+        toggleButton.innerHTML = '<span class="toggle-icon">▼</span> Show more';
     }
 }
 </script>
