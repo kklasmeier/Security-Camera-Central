@@ -182,14 +182,24 @@ def claim_one_event(conn) -> Optional[int]:
     2) UPDATE ... WHERE id=:candidate AND mp4_conversion_status='pending'
     If rowcount==1, we own it; else None.
     """
-    result = conn.execute(SELECT_ONE_PENDING_CANDIDATE_SQL).first()
-    if not result:
+    logger.log(f"[CLAIM] Executing SELECT query to find candidate event")
+    try:
+        result = conn.execute(SELECT_ONE_PENDING_CANDIDATE_SQL).first()
+        if not result:
+            logger.log(f"[CLAIM] No pending events found in database")
+            return None
+        candidate_id = result[0]
+        logger.log(f"[CLAIM] Found candidate event: {candidate_id}, attempting to claim it")
+        upd = conn.execute(CLAIM_SQL, {"candidate_id": candidate_id, "worker_id": WORKER_ID})
+        logger.log(f"[CLAIM] UPDATE executed, rowcount={upd.rowcount}")
+        if upd.rowcount == 1:
+            logger.log(f"[CLAIM] Successfully claimed event {candidate_id}")
+            return candidate_id
+        logger.log(f"[CLAIM] Failed to claim event {candidate_id} (already claimed by another worker)")
         return None
-    candidate_id = result[0]
-    upd = conn.execute(CLAIM_SQL, {"candidate_id": candidate_id, "worker_id": WORKER_ID})
-    if upd.rowcount == 1:
-        return candidate_id
-    return None
+    except Exception as e:
+        logger.log(f"[CLAIM] Exception during claim attempt: {type(e).__name__}: {e}")
+        raise
 
 # ======================================================================================
 # CONVERSION
@@ -315,6 +325,7 @@ def process_event(event_id: int, engine: Engine):
     - DB update complete (or failed)
     - Delete .h264 if MP4 exists and non-empty
     """
+    logger.log(f"[WORKER-{threading.current_thread().name}] Starting processing for event {event_id}")
     try:
         with engine.begin() as conn:
             row = conn.execute(FETCH_EVENT_SQL, {"event_id": event_id}).first()
@@ -359,8 +370,9 @@ def process_event(event_id: int, engine: Engine):
         # Check for .READY sentinel file to ensure transfer is complete
         # The transfer manager creates this sentinel after successfully moving the H.264 file
         sentinel_path = h264_full + ".READY"
+        logger.log(f"[WORKER-{threading.current_thread().name}] Event {event_id}: Checking for sentinel file: {sentinel_path}")
         if not os.path.exists(sentinel_path):
-            logger.log(f"Event {event_id}: Waiting for transfer completion (no .READY sentinel), deferring")
+            logger.log(f"[WORKER-{threading.current_thread().name}] Event {event_id}: Waiting for transfer completion (no .READY sentinel), deferring")
             # Set back to pending so it will be picked up again next loop
             with engine.begin() as conn:
                 conn.execute(text("""
@@ -369,8 +381,10 @@ def process_event(event_id: int, engine: Engine):
                     WHERE id = :event_id
                     LIMIT 1
                 """), {"event_id": event_id})
+            logger.log(f"[WORKER-{threading.current_thread().name}] Event {event_id}: Set back to pending, sleeping 2s before returning")
             # Sleep to avoid hot loop when waiting for transfer
             time.sleep(2.0)
+            logger.log(f"[WORKER-{threading.current_thread().name}] Event {event_id}: Returning from defer")
             return
 
         logger.log(f"Event {event_id}: Converting {h264_rel} -> {mp4_rel}")
@@ -412,10 +426,16 @@ def process_event(event_id: int, engine: Engine):
                 conn.execute(SET_FAILED_SQL, {"event_id": event_id})
             logger.log(f"❌ Event {event_id}: Conversion failed (rc={rc})")
 
+        logger.log(f"[WORKER-{threading.current_thread().name}] Event {event_id}: Processing completed successfully")
+
     except SQLAlchemyError as db_err:
         logger.log(f"❌ Event {event_id}: DB error during processing: {db_err}")
+        logger.log(f"[WORKER-{threading.current_thread().name}] Event {event_id}: Processing failed with DB error")
     except Exception as e:
         logger.log(f"❌ Event {event_id}: Unexpected error: {e}")
+        import traceback
+        logger.log(f"[WORKER-{threading.current_thread().name}] Event {event_id}: Traceback: {traceback.format_exc()}")
+        logger.log(f"[WORKER-{threading.current_thread().name}] Event {event_id}: Processing failed with unexpected error")
 
 # ======================================================================================
 # MAIN LOOP
@@ -431,9 +451,15 @@ def run_daemon():
         # Track running futures
         running = set()
 
+        loop_iteration = 0
         while not _stop_event.is_set():
+            loop_iteration += 1
+            logger.log(f"[LOOP-{loop_iteration}] Main loop iteration starting (backoff={backoff:.2f}s, running_tasks={len(running)})")
+            
             # Reap completed tasks quickly
             done_now = [f for f in running if f.done()]
+            if done_now:
+                logger.log(f"[LOOP-{loop_iteration}] Reaping {len(done_now)} completed task(s)")
             for f in done_now:
                 running.remove(f)
                 # ensure exceptions are surfaced in logs
@@ -445,44 +471,78 @@ def run_daemon():
             # Fill available slots by claiming work
             slots = CONCURRENCY - len(running)
             claimed_any = False
+            
+            # Safely introspect engine.pool without directly accessing attributes
+            # (use getattr/call to avoid static type checker errors if attributes are not present)
+            pool_obj = getattr(engine, "pool", None)
+            def _callattr(obj, name):
+                attr = getattr(obj, name, None)
+                try:
+                    return attr() if callable(attr) else attr
+                except Exception:
+                    return "N/A"
+            pool_size = _callattr(pool_obj, "size")
+            checked_in = _callattr(pool_obj, "checkedin")
+            checked_out = _callattr(pool_obj, "checkedout")
+            overflow = _callattr(pool_obj, "overflow")
+            logger.log(f"[LOOP-{loop_iteration}] Available slots: {slots}, Pool state: size={pool_size}, checked_in={checked_in}, checked_out={checked_out}, overflow={overflow}")
 
             if slots > 0:
+                logger.log(f"[LOOP-{loop_iteration}] Attempting to claim up to {slots} event(s)")
                 try:
                     with engine.begin() as conn:
-                        for _ in range(slots):
+                        logger.log(f"[LOOP-{loop_iteration}] Starting database transaction for claiming")
+                        for slot_num in range(slots):
                             if _stop_event.is_set():
+                                logger.log(f"[LOOP-{loop_iteration}] Stop event set, breaking claim loop")
                                 break
+                            logger.log(f"[LOOP-{loop_iteration}] Claim attempt {slot_num + 1}/{slots}")
                             event_id = claim_one_event(conn)
                             if event_id is None:
+                                logger.log(f"[LOOP-{loop_iteration}] No event claimed on attempt {slot_num + 1}, stopping claim attempts")
                                 break
                             claimed_any = True
+                            logger.log(f"[LOOP-{loop_iteration}] Submitting event {event_id} to thread pool")
                             fut = pool.submit(process_event, event_id, engine)
                             running.add(fut)
 
                 except SQLAlchemyError as e:
                     # Database lost / stale connection — rebuild engine and retry later
-                    logger.log(f"DB connection lost or stale; recreating engine. Details: {e}")
+                    logger.log(f"[LOOP-{loop_iteration}] ❌ SQLAlchemyError caught: {type(e).__name__}: {e}")
+                    logger.log(f"[LOOP-{loop_iteration}] DB connection lost or stale; recreating engine")
                     try:
                         engine.dispose()
+                        logger.log(f"[LOOP-{loop_iteration}] Engine disposed successfully")
                     except Exception as dispose_err:
-                        logger.log(f"Engine dispose failed (ignored): {dispose_err}")
+                        logger.log(f"[LOOP-{loop_iteration}] Engine dispose failed (ignored): {dispose_err}")
                     time.sleep(3)
                     try:
                         globals()["engine"] = create_db_engine()
-                        logger.log("Recreated database engine successfully.")
+                        logger.log(f"[LOOP-{loop_iteration}] Recreated database engine successfully.")
                     except Exception as re_err:
-                        logger.log(f"Engine recreation failed: {re_err}")
+                        logger.log(f"[LOOP-{loop_iteration}] ❌ Engine recreation failed: {re_err}")
                         time.sleep(5)
                     # Skip rest of loop so we don't increment backoff on DB errors
+                    continue
+                except Exception as e:
+                    # Catch ANY other exception that might be happening
+                    logger.log(f"[LOOP-{loop_iteration}] ❌ UNEXPECTED EXCEPTION during claim: {type(e).__name__}: {e}")
+                    import traceback
+                    logger.log(f"[LOOP-{loop_iteration}] Traceback: {traceback.format_exc()}")
+                    # Continue to next iteration
                     continue
 
             # Backoff handling
             if claimed_any:
+                logger.log(f"[LOOP-{loop_iteration}] Claimed work, resetting backoff to {BACKOFF_MIN_SECONDS}s")
                 backoff = BACKOFF_MIN_SECONDS
             else:
                 # No work claimed; idle a bit
+                logger.log(f"[LOOP-{loop_iteration}] No work claimed, sleeping for {backoff:.2f}s")
                 time.sleep(backoff)
+                old_backoff = backoff
                 backoff = min(BACKOFF_MAX_SECONDS, backoff * 2 if backoff < BACKOFF_MAX_SECONDS else BACKOFF_MAX_SECONDS)
+                logger.log(f"[LOOP-{loop_iteration}] After sleep, backoff increased from {old_backoff:.2f}s to {backoff:.2f}s")
 
         # Shutdown: wait for in-flight tasks to complete
         if running:
