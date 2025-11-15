@@ -944,7 +944,7 @@ tbody tr:last-child td {
 }
 
 /* ========================================
-   EVENTS PAGE - CARDS
+   EVENTS PAGE - CARDS WITH AI ENHANCEMENTS
    ======================================== */
 
 .event-card {
@@ -990,13 +990,48 @@ tbody tr:last-child td {
     padding: var(--space-md);
 }
 
+/* Header Row: Timestamp + Camera */
+.event-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+}
+
 .event-timestamp {
     font-size: var(--font-size-base);
     color: var(--color-text-secondary);
-    margin-bottom: var(--space-sm);
-    display: block;
+    flex-shrink: 0;
 }
 
+.event-camera {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* AI Phrase Row */
+.event-phrase {
+    font-size: var(--font-size-base);
+    color: var(--color-text-secondary);
+    margin-bottom: var(--space-sm);
+    line-height: 1.4;
+    font-weight: 600;
+    
+    /* Truncate to 1 line */
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: normal;
+}
+
+/* Meta Row */
 .event-meta {
     display: flex;
     justify-content: space-between;
@@ -1008,6 +1043,23 @@ tbody tr:last-child td {
 .event-duration {
     color: var(--color-text-muted);
     font-size: var(--font-size-sm);
+}
+
+@media (max-width: 767px) {
+    .event-header-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+    }
+    
+    .event-camera {
+        text-align: left;
+        font-size: var(--font-size-xs);
+    }
+    
+    .event-phrase {
+        font-size: var(--font-size-sm);
+    }
 }
 
 /* ========================================
@@ -1617,7 +1669,7 @@ tbody tr:last-child td {
     transition: transform 0.3s ease;
     font-size: 0.8em;
 }
-}
+
 
 /* ========================================
    LOGS PAGE

@@ -9,17 +9,40 @@
 #   api_service           → systemd (security-camera-central.service)
 #
 # ---------------------------------------------------------------
+# SUPPORTED COMMANDS:
+#
+#   help                       Show this help message
+#   list                       List all managed jobs
+#
+#   status                     Show status of all jobs
+#   status <job>               Show status of a single job
+#
+#   start <job>                Start a systemd job
+#   stop <job>                 Stop a systemd job
+#                              (cron job optimize_mp4 cannot be stopped)
+#
+#   restart <job>              Restart a systemd job
+#
+#   run optimize_mp4           Manually execute the cron job
+#
+#   logs <job>                 Show last 200 log lines
+#   follow <job>               Follow live logs (journal or logfile)
+#
+# ---------------------------------------------------------------
 # USAGE EXAMPLES:
 #
 #   ./jobctl.sh list
 #   ./jobctl.sh status
 #   ./jobctl.sh status ai_event_processor
 #   ./jobctl.sh restart api_service
+#   ./jobctl.sh start api_service
+#   ./jobctl.sh stop api_service
 #   ./jobctl.sh run optimize_mp4
-#   ./jobctl.sh logs api_service
+#   ./jobctl.sh logs convert_pending_mp4
 #   ./jobctl.sh follow api_service
 #
 # ---------------------------------------------------------------
+
 
 ### CONFIGURATION ###
 BASE="/home/pi/Security-Camera-Central/scripts"
@@ -182,9 +205,11 @@ function logs_job() {
 # Follow logs live
 function follow_job() {
     local job="$1"
+    local svc="${JOB_SERVICES[$job]}"
 
-    if [[ -n "${JOB_SERVICES[$job]}" ]]; then
-        sudo journalctl -u "${JOB_SERVICES[$job]}" -fu
+    if [[ -n "$svc" ]]; then
+        echo "Following logs for service: $svc"
+        sudo journalctl -u "$svc" -f --no-pager
         return
     fi
 
@@ -196,6 +221,7 @@ function follow_job() {
 
     echo "Unknown job: $job"
 }
+
 
 ### COMMAND ROUTER ###
 case "$1" in

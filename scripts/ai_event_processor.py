@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
 """
 ai_event_processor.py
-Continuous AI event analysis daemon for Security-Camera-Central.
-
-- Polls MariaDB for events with ai_processed=0 and non-null image paths
-- Processes one event at a time (newest first)
-- Resizes images and sends to moondream:latest for visual analysis
-- Passes moondream output to deepseek-r1:8b for phrase extraction
-- Updates DB with ai_description, ai_phrase, ai_processed, ai_processed_at
-- On error: populates ai_error and enforces 24-hour retry cooldown
-- Continuous loop with 5s sleep when no work
-- Plain text logging with timestamps
-- Graceful shutdown on SIGINT/SIGTERM
+Final version:
+- Uses Moondream for a natural-language narrative diff
+- Extracts keywords using Python (no extra LLM calls)
+- DeepSeek summarizes keyword into a 2–5 word phrase
+- Full logging
+- Safe DB writes
 """
 
+import re
 import os
 import sys
 import time
@@ -21,48 +17,47 @@ import signal
 import threading
 import base64
 import json
-import tempfile
 from datetime import datetime
 from io import BytesIO
-
 import requests
 from PIL import Image
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
-from typing import Optional, Tuple
+
+time.sleep(5)  # Delay to allow dependent services to start
 
 # ======================================================================================
 # CONFIG
 # ======================================================================================
 
-# AI Server Configuration
 AI_SERVER = "192.168.1.59:11434"
-MOONDREAM_MODEL = "moondream:latest"
-DEEPSEEK_MODEL = "deepseek-r1:8b"
+IMAGE_INSPECTION_MODEL = "moondream:latest"
+PHRASE_MODEL = "llama3.2:1b"
 
-# Image Optimization Settings
 IMAGE_QUALITY = 60
 IMAGE_RESIZE_PERCENT = 60
 
-# Processing Configuration
-POLL_INTERVAL = 5  # seconds to sleep when no work
-ERROR_RETRY_HOURS = 24  # hours to wait before retrying failed events
-AI_TIMEOUT_SECONDS = 600  # timeout for AI API calls (10 minutes)
+POLL_INTERVAL = 5
+ERROR_RETRY_HOURS = 24
+AI_TIMEOUT_SECONDS = 600
 
-# Prompts
-MOONDREAM_PROMPT = (
-    "these pictures are taken from a security camera four seconds apart mounted on a house. "
-    "tell me the differences between the two pictures."
+# Natural language narrative Moondream prompt
+IMAGE_INSPECTION_PROMPT = (
+    "These two images were taken from a security camera 4 seconds apart. "
+    "Describe ONLY the visual differences caused by motion or change. "
+    "Ignore lightbulbs, grass, and bushes. "
+    "Keep the description short, factual, and focused on what changed."
 )
 
-DEEPSEEK_PROMPT_PREFIX = (
-    "this is a description of an image taken from a security camera. Motion was detected "
-    "causing this picture to be taken. describe for me in a short phrase what this motion was "
-    "based on this description given. The phrase is used for efficiency of alerts in logs of "
-    "security footage. Give the phrase only, nothing else."
+# Phrase model receives ONLY the keyword signal
+PHRASE_PROMPT_PREFIX = (
+
+    "from this information summarize only the “{keyword}” into a 5-7 word phrase."
+    "It must be accurate and realistic. Think about the right sumarization before you answer.\n\n"
+    "{description}\n"   
 )
+
 
 # ======================================================================================
 # ENV LOADING
@@ -75,49 +70,37 @@ ENV_FILE = os.environ.get("ENV_FILE", os.path.join(PROJECT_ROOT, ".env"))
 if os.path.isfile(ENV_FILE):
     load_dotenv(ENV_FILE)
 
-# Required DB config
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
 DB_NAME = os.getenv("DB_NAME", "security_cameras")
 DB_USER = os.getenv("DB_USER", "securitycam")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 
-# Paths
 MEDIA_ROOT = os.getenv("MEDIA_ROOT", "/mnt/sdcard/security_camera/security_footage")
 
-# Logging
 LOG_DIR = os.getenv("LOG_DIR", os.path.join(PROJECT_ROOT, "scripts", "logs"))
 LOGFILE = os.path.join(LOG_DIR, "ai_event_processor.log")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # ======================================================================================
-# PLAIN-TEXT LOGGER
+# LOGGER
 # ======================================================================================
 
 class PlainLogger:
-    """Simplified plain-text logger. Thread-safe and systemd-friendly."""
-    def __init__(self, logfile: str):
+    def __init__(self, logfile):
         self.logfile = logfile
-        self._lock = threading.Lock()
-        os.makedirs(os.path.dirname(self.logfile), exist_ok=True)
-        # Ensure file exists
-        open(self.logfile, "a").close()
+        self.lock = threading.Lock()
+        os.makedirs(os.path.dirname(logfile), exist_ok=True)
+        open(logfile, "a").close()
 
     def log(self, msg: str):
-        """Append timestamped message to log file and echo to stdout."""
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         line = f"[{ts}] {msg}\n"
-        with self._lock:
-            try:
-                with open(self.logfile, "a", encoding="utf-8") as f:
-                    f.write(line)
-            except Exception as e:
-                sys.stderr.write(f"[logger error] {e}\n")
-        try:
-            sys.stdout.write(line)
-            sys.stdout.flush()
-        except Exception:
-            pass
+        with self.lock:
+            with open(self.logfile, "a", encoding="utf-8") as f:
+                f.write(line)
+        sys.stdout.write(line)
+        sys.stdout.flush()
 
 logger = PlainLogger(LOGFILE)
 
@@ -125,36 +108,14 @@ logger = PlainLogger(LOGFILE)
 # DATABASE
 # ======================================================================================
 
-def create_db_engine() -> Engine:
-    url = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
-    engine = create_engine(
-        url,
-        pool_size=2,
-        max_overflow=3,
-        pool_pre_ping=True,
-        pool_recycle=3600,
-        echo=False,
+def create_db_engine():
+    url = (
+        f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/"
+        f"{DB_NAME}?charset=utf8mb4"
     )
-    return engine
+    return create_engine(url, pool_size=2, max_overflow=3, pool_pre_ping=True)
 
 engine = create_db_engine()
-
-# ======================================================================================
-# SIGNAL HANDLING
-# ======================================================================================
-
-_stop_event = threading.Event()
-
-def handle_signal(signum, frame):
-    logger.log(f"Received signal {signum}; initiating graceful shutdown...")
-    _stop_event.set()
-
-signal.signal(signal.SIGINT, handle_signal)
-signal.signal(signal.SIGTERM, handle_signal)
-
-# ======================================================================================
-# DATABASE QUERIES
-# ======================================================================================
 
 SELECT_UNPROCESSED_EVENT_SQL = text("""
     SELECT id, image_a_path, image_b_path
@@ -163,13 +124,11 @@ SELECT_UNPROCESSED_EVENT_SQL = text("""
       AND image_a_path IS NOT NULL
       AND image_b_path IS NOT NULL
       AND (
-          ai_error IS NULL 
-          OR ai_error = ''
-          OR ai_processed_at < DATE_SUB(NOW(), INTERVAL :retry_hours HOUR)
+        ai_error IS NULL
+        OR ai_error = ''
+        OR ai_processed_at < DATE_SUB(NOW(), INTERVAL :retry_hours HOUR)
       )
-    ORDER BY 
-      CASE WHEN ai_error IS NULL OR ai_error = '' THEN 0 ELSE 1 END,
-      timestamp DESC
+    ORDER BY timestamp DESC
     LIMIT 1
 """)
 
@@ -184,6 +143,14 @@ UPDATE_SUCCESS_SQL = text("""
     LIMIT 1
 """)
 
+UPDATE_ERROR_SQL = text("""
+    UPDATE events
+    SET ai_processed_at = NOW(6),
+        ai_error = :error
+    WHERE id = :event_id
+    LIMIT 1
+""")
+
 UPDATE_PARTIAL_SUCCESS_SQL = text("""
     UPDATE events
     SET ai_processed_at = NOW(6),
@@ -193,239 +160,315 @@ UPDATE_PARTIAL_SUCCESS_SQL = text("""
     LIMIT 1
 """)
 
-UPDATE_ERROR_SQL = text("""
-    UPDATE events
-    SET ai_processed_at = NOW(6),
-        ai_error = :error
-    WHERE id = :event_id
-    LIMIT 1
-""")
-
 # ======================================================================================
 # IMAGE PROCESSING
 # ======================================================================================
 
-def optimize_image(image_path: str) -> str:
-    """
-    Load image, resize to IMAGE_RESIZE_PERCENT, reduce quality, return base64.
-    """
+def optimize_image(path: str) -> str:
     try:
-        img = Image.open(image_path)
-        
-        # Calculate new size
-        new_width = int(img.width * IMAGE_RESIZE_PERCENT / 100)
-        new_height = int(img.height * IMAGE_RESIZE_PERCENT / 100)
-        
-        # Resize
-        img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        
-        # Convert to RGB if necessary (for JPEG compatibility)
-        if img_resized.mode in ("RGBA", "P"):
-            img_resized = img_resized.convert("RGB")
-        
-        # Save to bytes with quality reduction
-        buffer = BytesIO()
-        img_resized.save(buffer, format="JPEG", quality=IMAGE_QUALITY, optimize=True)
-        buffer.seek(0)
-        
-        # Encode to base64
-        b64_str = base64.b64encode(buffer.read()).decode('utf-8')
-        return b64_str
-        
+        img = Image.open(path)
+
+        new_w = int(img.width * IMAGE_RESIZE_PERCENT / 100)
+        new_h = int(img.height * IMAGE_RESIZE_PERCENT / 100)
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=IMAGE_QUALITY, optimize=True)
+        buf.seek(0)
+
+        return base64.b64encode(buf.read()).decode()
     except Exception as e:
-        raise RuntimeError(f"Failed to optimize image {image_path}: {e}")
+        raise RuntimeError(f"Failed to optimize {path}: {e}")
 
 # ======================================================================================
-# AI API CALLS
+# KEYWORD EXTRACTION (Python-only)
 # ======================================================================================
 
-def call_moondream(image_a_b64: str, image_b_b64: str) -> str:
-    """
-    Call moondream model with two base64-encoded images.
-    Returns the text response.
-    """
-    url = f"http://{AI_SERVER}/api/generate"
-    payload = {
-        "model": MOONDREAM_MODEL,
-        "prompt": MOONDREAM_PROMPT,
-        "images": [image_a_b64, image_b_b64],
-        "stream": False
-    }
-    
-    try:
-        start_time = time.time()
-        response = requests.post(url, json=payload, timeout=AI_TIMEOUT_SECONDS)
-        elapsed = time.time() - start_time
-        logger.log(f"Moondream API call completed in {elapsed:.1f}s")
-        
-        response.raise_for_status()
-        result = response.json()
-        return result.get("response", "").strip()
-    except requests.exceptions.Timeout:
-        raise RuntimeError(f"Moondream API call timed out after {AI_TIMEOUT_SECONDS}s")
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Moondream API call failed: {e}")
-    except (KeyError, json.JSONDecodeError) as e:
-        raise RuntimeError(f"Moondream API response parsing failed: {e}")
 
-def call_deepseek(moondream_description: str) -> str:
-    """
-    Call deepseek model with moondream's description to extract a short phrase.
-    Returns the text response.
-    """
+import re
+
+def extract_motion_keywords(text: str) -> str:
+    # Normalize and tokenize by words only (whole-word safety)
+    words = set(re.findall(r"\b[a-zA-Z]+\b", text.lower()))
+    full_text = text.lower()
+
+    # ------------------------------------------------------------------
+    # NEGATION HELPERS
+    # ------------------------------------------------------------------
+    def negated(phrases):
+        """Return True if any negation phrase appears in the full text."""
+        return any(neg in full_text for neg in phrases)
+
+    # ------------------------------------------------------------------
+    # PERSON DETECTION (man / woman / child / person)
+    # ------------------------------------------------------------------
+    MAN_WORDS = {"man", "male", "gentleman", "guy"}
+    WOMAN_WORDS = {"woman", "female", "lady"}
+    CHILD_WORDS = {"child", "kid", "boy", "girl", "toddler", "infant", "teen"}
+    PERSON_WORDS = {"person", "people", "human", "individual", "figure"}
+
+    MAN_NEG = ["no man", "not a man", "no men", "no other people"]
+    WOMAN_NEG = ["no woman", "not a woman", "no women", "no other people"]
+    CHILD_NEG = ["no child", "no children", "no kid", "no kids", "not a child"]
+    PERSON_NEG = ["no person", "no people", "no humans", "not a person"]
+
+    # Man
+    if not negated(MAN_NEG) and (words & MAN_WORDS):
+        return "man detected"
+
+    # Woman
+    if not negated(WOMAN_NEG) and (words & WOMAN_WORDS):
+        return "woman detected"
+
+    # Child
+    if not negated(CHILD_NEG) and (words & CHILD_WORDS):
+        return "child detected"
+
+    # Generic person
+    if not negated(PERSON_NEG) and (words & PERSON_WORDS):
+        return "person detected"
+
+    # ------------------------------------------------------------------
+    # VEHICLES
+    # ------------------------------------------------------------------
+    CAR_WORDS = {"car", "truck", "vehicle", "van", "suv", "jeep", "pickup"}
+    CAR_NEG = ["no car", "no vehicle", "no cars", "no vehicles"]
+
+    if not negated(CAR_NEG) and (words & CAR_WORDS):
+        return "moving car detected"
+
+    # ------------------------------------------------------------------
+    # ANIMALS
+    # ------------------------------------------------------------------
+    ANIMAL_WORDS = {
+        "dog", "cat", "bird", "deer", "raccoon", "squirrel",
+        "fox", "coyote", "rabbit", "duck", "goose", "turkey"
+    }
+    ANIMAL_NEG = ["no animal", "no animals", "no dog", "no dogs", "no cats"]
+
+    if not negated(ANIMAL_NEG) and (words & ANIMAL_WORDS):
+        return "animal detected"
+
+    # ------------------------------------------------------------------
+    # TREE / PLANT MOTION
+    # ------------------------------------------------------------------
+    TREE_WORDS = {"branch", "branches", "tree", "trees", "bush", "bushes", "plant", "plants", "foliage", "leaves"}
+    TREE_NEG = ["no tree", "no trees", "no branches", "no leaves"]
+
+    if not negated(TREE_NEG) and (words & TREE_WORDS):
+        return "tree motion"
+
+    # ------------------------------------------------------------------
+    # LIGHT / SHADOW MOTION
+    # ------------------------------------------------------------------
+    LIGHT_WORDS = {"shadow", "shadows", "light", "lights", "lighting", "reflection", "glare", "brightness"}
+    LIGHT_NEG = ["no light", "no lights", "no shadow", "no shadows"]
+
+    if not negated(LIGHT_NEG) and (words & LIGHT_WORDS):
+        return "light change"
+
+    # ------------------------------------------------------------------
+    # OBJECT MOVEMENT
+    # ------------------------------------------------------------------
+    OBJECT_WORDS = {"object", "item", "moved", "shifted", "fell", "fallen", "dropped"}
+    OBJECT_NEG = ["no object", "no movement", "nothing moved"]
+
+    if not negated(OBJECT_NEG) and (words & OBJECT_WORDS):
+        return "object moved"
+
+    # ------------------------------------------------------------------
+    # FINAL FALLBACK
+    # ------------------------------------------------------------------
+    return "unknown movement"
+
+
+
+# ======================================================================================
+# AI CALLS
+# ======================================================================================
+
+def call_moondream(a64: str, b64: str) -> str:
     url = f"http://{AI_SERVER}/api/generate"
-    prompt = f"{DEEPSEEK_PROMPT_PREFIX}\n\"{moondream_description}\""
+
     payload = {
-        "model": DEEPSEEK_MODEL,
-        "prompt": prompt,
+        "model": IMAGE_INSPECTION_MODEL,
+        "prompt": IMAGE_INSPECTION_PROMPT,
+        "images": [a64, b64],
         "stream": False
     }
-    
+
+    logger.log("Image inspection prompt:")
+    logger.log(IMAGE_INSPECTION_PROMPT)
+    logger.log(f"Calling image inspection model ({IMAGE_INSPECTION_MODEL})...")
+
+    start = time.time()
+    resp = requests.post(url, json=payload, timeout=AI_TIMEOUT_SECONDS)
+    elapsed = time.time() - start
+
+    logger.log(f"{IMAGE_INSPECTION_MODEL} completed in {elapsed:.1f}s")
+    resp.raise_for_status()
+
+    text = resp.json().get("response", "").strip()
+    logger.log("{IMAGE_INSPECTION_MODEL} output:")
+    logger.log(text)
+
+    return text
+
+
+def sanitize_phrase_output(text: str) -> str:
+    """Ensure output is 2–5 words, remove punctuation."""
+    t = text.strip().lower()
+    t = "".join(c for c in t if c.isalnum() or c == " ")
+    words = t.split()
+    if len(words) < 1 or len(words) > 5:
+        return "unknown movement"
+    return " ".join(words)
+
+
+def call_phrase_model(event_id: int, keyword: str, description: str) -> str:
+    """Generate the final motion phrase based on a keyword + narrative description."""
+    prompt = PHRASE_PROMPT_PREFIX.format(keyword=keyword, description=description)
+
+    logger.log(f"Event {event_id}: Phrase prompt:\n{prompt.strip()}")
+
+    start = time.time()
     try:
-        start_time = time.time()
-        response = requests.post(url, json=payload, timeout=AI_TIMEOUT_SECONDS)
-        elapsed = time.time() - start_time
-        logger.log(f"Deepseek API call completed in {elapsed:.1f}s")
-        
-        response.raise_for_status()
-        result = response.json()
-        return result.get("response", "").strip()
-    except requests.exceptions.Timeout:
-        raise RuntimeError(f"Deepseek API call timed out after {AI_TIMEOUT_SECONDS}s")
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Deepseek API call failed: {e}")
-    except (KeyError, json.JSONDecodeError) as e:
-        raise RuntimeError(f"Deepseek API response parsing failed: {e}")
+        r = requests.post(
+            f"http://{AI_SERVER}/api/generate",
+            json={
+                "model": PHRASE_MODEL,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=AI_TIMEOUT_SECONDS,
+        )
+        r.raise_for_status()
+        raw_output = r.json().get("response", "").strip()
+    except Exception as e:
+        raise RuntimeError(f"Phrase model error: {e}")
+
+    elapsed = time.time() - start
+    logger.log(f"Event {event_id}: Phrase model completed in {elapsed:.1f}s")
+    logger.log(f"Event {event_id}: Phrase RAW output:\n{raw_output}")
+
+    # Sanitize: keep only the first line, lowercase, strip junk
+    phrase = raw_output.split("\n")[0].strip()
+
+    # Safety: enforce word count and fallback
+    wc = len(phrase.split())
+    if not (3 <= wc <= 10):  # allow minor variance
+        logger.log(f"Event {event_id}: Phrase invalid length ({wc} words), using fallback.")
+        phrase = "Unknown movement"
+
+    return phrase
+
 
 # ======================================================================================
 # EVENT PROCESSING
 # ======================================================================================
 
-def path_join_media(relative_path: str) -> str:
-    """Join relative path with MEDIA_ROOT."""
-    rel = relative_path.lstrip("/").replace("..", "")
-    return os.path.join(MEDIA_ROOT, rel)
+def path_join_media(rel_path: str) -> str:
+    return os.path.join(MEDIA_ROOT, rel_path.lstrip("/"))
 
-def process_event(event_id: int, image_a_rel: str, image_b_rel: str):
-    """
-    Process a single event:
-    1. Load and optimize both images
-    2. Call moondream for visual analysis
-    3. Call deepseek for phrase extraction
-    4. Update database with results
-    """
-    moondream_result = None
-    start_time = time.time()
-    
+def process_event(event_id: int, a_rel: str, b_rel: str):
+    start = time.time()
+    narrative = None
+
     try:
-        # Build full paths
-        image_a_full = path_join_media(image_a_rel)
-        image_b_full = path_join_media(image_b_rel)
-        
-        logger.log(f"Event {event_id}: Processing images {image_a_rel} and {image_b_rel}")
-        
-        # Validate files exist
-        if not os.path.isfile(image_a_full):
-            raise RuntimeError(f"Image A not found: {image_a_full}")
-        if not os.path.isfile(image_b_full):
-            raise RuntimeError(f"Image B not found: {image_b_full}")
-        
-        # Optimize images
-        logger.log(f"Event {event_id}: Optimizing images...")
-        image_a_b64 = optimize_image(image_a_full)
-        image_b_b64 = optimize_image(image_b_full)
-        
-        # Call moondream
-        logger.log(f"Event {event_id}: Calling Moondream...")
-        moondream_result = call_moondream(image_a_b64, image_b_b64)
-        logger.log(f"Event {event_id}: Moondream result: {moondream_result[:100]}...")
-        
-        # Call deepseek
-        logger.log(f"Event {event_id}: Calling Deepseek...")
-        deepseek_result = call_deepseek(moondream_result)
-        logger.log(f"Event {event_id}: Deepseek phrase: {deepseek_result}")
-        
-        # Update database with success
+        full_a = path_join_media(a_rel)
+        full_b = path_join_media(b_rel)
+
+        logger.log(f"Event {event_id}: Processing {a_rel}, {b_rel}")
+
+        if not os.path.isfile(full_a):
+            raise RuntimeError(f"Missing image A: {full_a}")
+        if not os.path.isfile(full_b):
+            raise RuntimeError(f"Missing image B: {full_b}")
+
+        a64 = optimize_image(full_a)
+        b64 = optimize_image(full_b)
+
+        # === CALL 1: Moondream ===
+        narrative = call_moondream(b64, a64)
+ # type: ignore
+        # Python keyword extraction
+        keyword = extract_motion_keywords(narrative)
+        logger.log(f"Extracted keyword: {keyword}")
+
+        # === CALL 2: DeepSeek ===
+        phrase = call_phrase_model(event_id, keyword, narrative)
+        safe_phrase = phrase[:250]
+
+        # Save results
         with engine.begin() as conn:
             conn.execute(UPDATE_SUCCESS_SQL, {
                 "event_id": event_id,
-                "description": moondream_result,
-                "phrase": deepseek_result
+                "description": narrative,
+                "phrase": safe_phrase
             })
-        
-        total_time = time.time() - start_time
-        logger.log(f"✅ Event {event_id}: Successfully processed in {total_time:.1f}s")
-        
+
+        elapsed = time.time() - start
+        logger.log(f"✓ Event {event_id} processed in {elapsed:.1f}s")
+
     except Exception as e:
-        error_msg = str(e)
-        total_time = time.time() - start_time
-        logger.log(f"❌ Event {event_id}: Error after {total_time:.1f}s - {error_msg}")
-        
-        # Update database with error
-        # If we have moondream result, save it (partial success)
+        err = str(e)
+        logger.log(f"❌ Event {event_id} failed: {err}")
+
         try:
             with engine.begin() as conn:
-                if moondream_result:
+                if narrative:
                     conn.execute(UPDATE_PARTIAL_SUCCESS_SQL, {
                         "event_id": event_id,
-                        "description": moondream_result,
-                        "error": error_msg
+                        "description": narrative,
+                        "error": err
                     })
                 else:
                     conn.execute(UPDATE_ERROR_SQL, {
                         "event_id": event_id,
-                        "error": error_msg
+                        "error": err
                     })
-        except SQLAlchemyError as db_err:
-            logger.log(f"❌ Event {event_id}: Failed to update error in DB: {db_err}")
+        except Exception as db_e:
+            logger.log(f"DB update failed: {db_e}")
+
 
 # ======================================================================================
 # MAIN LOOP
 # ======================================================================================
 
+_stop_event = threading.Event()
+
+def handle_signal(signum, frame):
+    logger.log(f"Received signal {signum}; shutting down...")
+    _stop_event.set()
+
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
+
 def run_daemon():
-    logger.log("=== AI Event Processor: starting up ===")
-    logger.log(f"Config: AI_SERVER={AI_SERVER}, POLL_INTERVAL={POLL_INTERVAL}s, ERROR_RETRY={ERROR_RETRY_HOURS}h")
-    logger.log(f"Config: IMAGE_RESIZE={IMAGE_RESIZE_PERCENT}%, IMAGE_QUALITY={IMAGE_QUALITY}")
-    logger.log(f"Config: AI_TIMEOUT={AI_TIMEOUT_SECONDS}s ({AI_TIMEOUT_SECONDS/60:.1f} minutes)")
-    
+    logger.log("=== AI Event Processor Starting ===")
+
     while not _stop_event.is_set():
         try:
-            # Look for next unprocessed event
             with engine.begin() as conn:
-                result = conn.execute(
-                    SELECT_UNPROCESSED_EVENT_SQL, 
+                row = conn.execute(
+                    SELECT_UNPROCESSED_EVENT_SQL,
                     {"retry_hours": ERROR_RETRY_HOURS}
                 ).first()
-                
-                if result:
-                    event_id, image_a_rel, image_b_rel = result
-                    # Process this event
-                    process_event(event_id, image_a_rel, image_b_rel)
-                else:
-                    # No work available, sleep
-                    time.sleep(POLL_INTERVAL)
-                    
-        except SQLAlchemyError as e:
-            logger.log(f"DB error in main loop: {e}")
-            logger.log("Recreating database engine...")
-            try:
-                engine.dispose()
-            except Exception:
-                pass
-            time.sleep(5)
-            try:
-                globals()["engine"] = create_db_engine()
-                logger.log("Database engine recreated successfully")
-            except Exception as re_err:
-                logger.log(f"Engine recreation failed: {re_err}")
-                time.sleep(10)
-        
+
+            if row:
+                event_id, a_rel, b_rel = row
+                process_event(event_id, a_rel, b_rel)
+            else:
+                time.sleep(POLL_INTERVAL)
+
         except Exception as e:
-            logger.log(f"Unexpected error in main loop: {e}")
+            logger.log(f"Unexpected main loop error: {e}")
             time.sleep(POLL_INTERVAL)
-    
-    logger.log("=== AI Event Processor: clean shutdown ===")
+
+    logger.log("=== AI Event Processor Shutdown ===")
 
 if __name__ == "__main__":
     try:

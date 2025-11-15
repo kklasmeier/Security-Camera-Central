@@ -423,13 +423,36 @@ function toggleDescription() {
         textElement.classList.add('expanded');
         toggleIcon.textContent = '▲';
         toggleButton.innerHTML = '<span class="toggle-icon">▲</span> Show less';
+        // Save expanded state to localStorage
+        localStorage.setItem('aiDescriptionExpanded', 'true');
     } else {
         textElement.classList.remove('expanded');
         textElement.classList.add('collapsed');
         toggleIcon.textContent = '▼';
         toggleButton.innerHTML = '<span class="toggle-icon">▼</span> Show more';
+        // Save collapsed state to localStorage
+        localStorage.setItem('aiDescriptionExpanded', 'false');
     }
 }
+
+// Initialize description state from localStorage on page load
+document.addEventListener('DOMContentLoaded', function() {
+    const textElement = document.getElementById('ai-description-text');
+    const toggleButton = document.getElementById('ai-description-toggle');
+    
+    // Only apply if description exists on the page
+    if (textElement && toggleButton) {
+        const isExpanded = localStorage.getItem('aiDescriptionExpanded') === 'true';
+        
+        if (isExpanded) {
+            // Apply expanded state
+            textElement.classList.remove('collapsed');
+            textElement.classList.add('expanded');
+            toggleButton.innerHTML = '<span class="toggle-icon">▲</span> Show less';
+        }
+        // If not expanded or no preference saved, it stays in default collapsed state
+    }
+});
 </script>
 
 <?php include 'includes/footer.php'; ?>

@@ -114,15 +114,22 @@ include 'includes/header.php';
                         
                         <!-- Card Content -->
                         <div class="event-card-content">
-                            <!-- Camera Name (only show when viewing all cameras) -->
-                            <?php if (is_all_cameras_selected()): ?>
+                            <!-- Timestamp + Camera Name Row -->
+                            <div class="event-header-row">
+                                <span class="event-timestamp"><?php echo htmlspecialchars($timestamp); ?></span>
                                 <span class="event-camera">
-                                    📷 <?php echo htmlspecialchars(get_camera_display_name($event['camera_id'], $db)); ?>
+                                    🔷 <?php echo htmlspecialchars(get_camera_display_name($event['camera_id'], $db)); ?>
                                 </span>
-                            <?php endif; ?>
+                            </div>
                             
-                            <!-- Timestamp -->
-                            <span class="event-timestamp"><?php echo htmlspecialchars($timestamp); ?></span>
+                            <!-- AI Phrase Row -->
+                            <div class="event-phrase">
+                                <?php if (!empty($event['ai_phrase'])): ?>
+                                    <?php echo htmlspecialchars($event['ai_phrase']); ?>
+                                <?php else: ?>
+                                    ⏳ AI analysis pending...
+                                <?php endif; ?>
+                            </div>
                             
                             <!-- Meta Row: Motion Badge + Duration -->
                             <div class="event-meta">
@@ -173,7 +180,7 @@ include 'includes/header.php';
         <?php else: ?>
             <!-- Empty State -->
             <div class="empty-state">
-                <div class="empty-state-icon">📷</div>
+                <div class="empty-state-icon">🔷</div>
                 <h2 class="empty-state-title">No Events Found</h2>
                 <p class="empty-state-message">
                     <?php if (is_all_cameras_selected()): ?>
