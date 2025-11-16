@@ -67,7 +67,16 @@ class Database {
         if (!$this->isConnected()) return [];
         
         try {
-            $sql = "SELECT * FROM events";
+            $sql = "SELECT 
+                id, camera_id, timestamp, motion_score, confidence_score,
+                status, image_a_path, image_b_path, thumbnail_path, 
+                video_h264_path, video_mp4_path, video_duration,
+                image_a_transferred, image_b_transferred, thumbnail_transferred, video_transferred,
+                mp4_conversion_status, mp4_converted_at,
+                ai_processed, ai_processed_at, ai_person_detected, ai_confidence, 
+                ai_objects, ai_description, ai_phrase, ai_error,
+                created_at
+                FROM events";
             
             // Add camera filter if specified
             if ($camera_id !== null && $camera_id !== 'all') {
@@ -103,7 +112,16 @@ class Database {
         
         try {
             $stmt = $this->pdo->prepare("
-                SELECT * FROM events 
+                SELECT 
+                    id, camera_id, timestamp, motion_score, confidence_score,
+                    status, image_a_path, image_b_path, thumbnail_path,
+                    video_h264_path, video_mp4_path, video_duration,
+                    image_a_transferred, image_b_transferred, thumbnail_transferred, video_transferred,
+                    mp4_conversion_status, mp4_converted_at,
+                    ai_processed, ai_processed_at, ai_person_detected, ai_confidence,
+                    ai_objects, ai_description, ai_phrase, ai_error,
+                    created_at
+                FROM events 
                 WHERE id = :id
             ");
             $stmt->bindValue(':id', $id, PDO::PARAM_INT);

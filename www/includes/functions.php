@@ -57,24 +57,27 @@ function format_event_timestamp($timestamp) {
 }
 
 /**
- * Get motion score badge information
+ * Get motion confidence badge information
  * 
- * @param int $score Motion detection score (0-999+)
+ * @param float $confidence_score Normalized confidence score (0-100+%)
  * @return array ['color' => string, 'label' => string, 'symbol' => string]
  * 
- * Color coding:
- * - Low (0-149): Red - common, minor motion
- * - Medium (150-249): Yellow - moderate motion
- * - High (250+): Green - significant motion/activity
+ * Color coding based on confidence percentage:
+ * - Low (< 10%): Red - barely over threshold, likely false positive
+ * - Medium (10-29%): Yellow - moderate confidence
+ * - High (>= 30%): Green - high confidence, definitely motion
  */
-function get_motion_badge($score) {
-    if ($score >= 250) {
+function get_motion_badge($confidence_score) {
+    // Cast to float to ensure numeric comparison
+    $confidence_score = (float)$confidence_score;
+    
+    if ($confidence_score >= 30) {
         return [
             'color' => 'high',    // CSS class: .badge-high
             'label' => 'High',
             'symbol' => '●'       // Solid circle (will be colored by CSS)
         ];
-    } elseif ($score >= 150) {
+    } elseif ($confidence_score >= 10) {
         return [
             'color' => 'medium',  // CSS class: .badge-medium
             'label' => 'Medium',

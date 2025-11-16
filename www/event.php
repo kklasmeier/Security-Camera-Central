@@ -43,8 +43,8 @@ $video_url = get_video_url($event);
 $image_a_url = get_image_url($event['image_a_path']);
 $image_b_url = get_image_url($event['image_b_path']);
 
-// Get motion badge info
-$badge = get_motion_badge($event['motion_score']);
+// Get motion badge info based on confidence score
+$badge = get_motion_badge($event['confidence_score'] ?? 0);
 
 // Page title
 $page_title = "Event #" . $event_id;

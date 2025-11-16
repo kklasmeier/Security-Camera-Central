@@ -35,6 +35,7 @@ class Event(Base):
     camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     timestamp = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     motion_score = Column(Float, nullable=True)
+    confidence_score = Column(Float, nullable=True)
 
     status = Column(
         String(20),

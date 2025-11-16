@@ -102,6 +102,7 @@ class EventCreateRequest(BaseModel):
     camera_id: str = Field(..., max_length=50, description="Camera identifier (must be registered)")
     timestamp: datetime = Field(..., description="When motion was detected (ISO 8601 format)")
     motion_score: float = Field(..., ge=0, description="Number of changed pixels")
+    confidence_score: Optional[float] = Field(None, ge=0, description="Confidence score (0-100+%)")
     
     @validator('timestamp', pre=True)
     def parse_timestamp(cls, v):
@@ -119,7 +120,8 @@ class EventCreateRequest(BaseModel):
             "example": {
                 "camera_id": "camera_1",
                 "timestamp": "2025-10-28T14:30:22.186476",
-                "motion_score": 75.3
+                "motion_score": 75.3,
+                "confidence_score": 50.6
             }
         }
 
@@ -186,7 +188,8 @@ class EventResponse(BaseModel):
     id: int
     camera_id: str
     timestamp: datetime
-    motion_score: Optional[float] = None    
+    motion_score: Optional[float] = None
+    confidence_score: Optional[float] = None
     status: str = Field(
         default="processing",
         description="Event processing status: processing, complete, interrupted, failed"
@@ -239,6 +242,7 @@ class EventListResponse(BaseModel):
                         "camera_id": "camera_1",
                         "timestamp": "2025-10-28T14:30:22.186476",
                         "motion_score": 75.3,
+                        "confidence_score": 50.6,
                         "image_a_path": "camera_1/pictures/42_20251028_143022_a.jpg",
                         "image_b_path": "camera_1/pictures/42_20251028_143022_b.jpg",
                         "thumbnail_path": "camera_1/thumbs/42_20251028_143022_thumb.jpg",

@@ -87,8 +87,8 @@ include 'includes/header.php';
             <div class="events-grid">
                 <?php foreach ($events as $event): ?>
                     <?php
-                        // Get motion badge info
-                        $badge = get_motion_badge($event['motion_score']);
+                        // Get motion badge info based on confidence score
+                        $badge = get_motion_badge($event['confidence_score'] ?? 0);
                         
                         // Get thumbnail URL (with fallback)
                         $thumbnail_url = get_thumbnail_url($event);
@@ -133,7 +133,8 @@ include 'includes/header.php';
                             
                             <!-- Meta Row: Motion Badge + Duration -->
                             <div class="event-meta">
-                                <!-- Motion Score Badge -->
+                                <!-- Motion Score Badge (colored by confidence) -->
+                                <!-- Debug: <?php echo "Confidence: " . ($event['confidence_score'] ?? 'NULL') . ", Color: " . $badge['color']; ?> -->
                                 <span class="badge badge-<?php echo $badge['color']; ?>">
                                     <span style="font-size: 1.2em;"><?php echo $badge['symbol']; ?></span> Movement Score (<?php echo $event['motion_score']; ?>)
                                 </span>

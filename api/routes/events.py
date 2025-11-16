@@ -56,6 +56,7 @@ def create_event(
             camera_id=request.camera_id,
             timestamp=request.timestamp,
             motion_score=request.motion_score,
+            confidence_score=request.confidence_score,
             
             # File paths - initially NULL
             image_a_path=None,
