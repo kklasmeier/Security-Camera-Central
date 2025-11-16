@@ -205,19 +205,21 @@ class Database {
     // ========================================
     
     /**
-     * Get logs with optional filtering
+     * Get the most recent logs with optional filtering
+     * Uses subquery to get last N logs, then orders them ASC for terminal-style display
+     * 
      * @param int $limit Number of logs to return
-     * @param int $offset Starting position
      * @param array|null $level_filter Array of log levels to filter (e.g., ['INFO', 'WARNING'])
-     * @param string $order Sort order: 'ASC' or 'DESC' (default: DESC)
      * @param string|null $source_filter Optional source/camera filter (e.g., 'camera_1' or 'all')
-     * @return array Array of log records
+     * @return array Array of log records ordered by id ASC (oldest to newest)
      */
-    public function get_logs($limit = 1000, $offset = 0, $level_filter = null, $order = 'DESC', $source_filter = null) {
+    public function get_logs($limit = 1000, $level_filter = null, $source_filter = null) {
         if (!$this->isConnected()) return [];
         
         try {
-            $sql = "SELECT * FROM logs WHERE 1=1";
+            // Build WHERE clause for filters
+            $where_conditions = [];
+            $where_sql = "";
             
             // Handle array of level filters
             if ($level_filter && is_array($level_filter) && !empty($level_filter)) {
@@ -225,18 +227,26 @@ class Database {
                 foreach ($level_filter as $index => $level) {
                     $placeholders[] = ":level{$index}";
                 }
-                $sql .= " AND level IN (" . implode(',', $placeholders) . ")";
+                $where_conditions[] = "level IN (" . implode(',', $placeholders) . ")";
             }
             
             // Handle source filter (camera_id)
             if ($source_filter !== null && $source_filter !== 'all') {
-                $sql .= " AND source = :source";
+                $where_conditions[] = "source = :source";
             }
             
-            // Validate order parameter
-            $order = strtoupper($order) === 'ASC' ? 'ASC' : 'DESC';
+            if (!empty($where_conditions)) {
+                $where_sql = "WHERE " . implode(' AND ', $where_conditions);
+            }
             
-            $sql .= " ORDER BY timestamp {$order} LIMIT :limit OFFSET :offset";
+            // Subquery approach: Get most recent N logs (DESC), then flip to ASC
+            $sql = "SELECT * FROM (
+                        SELECT * FROM logs 
+                        {$where_sql}
+                        ORDER BY id DESC 
+                        LIMIT :limit
+                    ) AS recent_logs
+                    ORDER BY id ASC";
             
             $stmt = $this->pdo->prepare($sql);
             
@@ -253,7 +263,6 @@ class Database {
             }
             
             $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
-            $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
             $stmt->execute();
             
             return $stmt->fetchAll();
@@ -313,17 +322,20 @@ class Database {
     }
     
     /**
-     * Get logs since a specific timestamp (for "Get More" functionality)
-     * @param string $timestamp ISO format timestamp
+     * Get logs after a specific log ID (for "Get Newer Logs" functionality)
+     * Returns logs in ASC order (oldest to newest) to append to bottom of display
+     * 
+     * @param int $last_log_id The ID of the most recent log currently displayed
+     * @param int $limit Number of logs to return (default 1000)
      * @param array|null $level_filter Array of log levels to filter
      * @param string|null $source_filter Optional source/camera filter
-     * @return array Array of log records
+     * @return array Array of log records ordered by id ASC
      */
-    public function get_logs_since($timestamp, $level_filter = null, $source_filter = null) {
+    public function get_logs_after($last_log_id, $limit = 1000, $level_filter = null, $source_filter = null) {
         if (!$this->isConnected()) return [];
         
         try {
-            $sql = "SELECT * FROM logs WHERE timestamp > :timestamp";
+            $sql = "SELECT * FROM logs WHERE id > :last_log_id";
             
             // Handle array of level filters
             if ($level_filter && is_array($level_filter) && !empty($level_filter)) {
@@ -339,10 +351,10 @@ class Database {
                 $sql .= " AND source = :source";
             }
             
-            $sql .= " ORDER BY timestamp ASC";
+            $sql .= " ORDER BY id ASC LIMIT :limit";
             
             $stmt = $this->pdo->prepare($sql);
-            $stmt->bindValue(':timestamp', $timestamp, PDO::PARAM_STR);
+            $stmt->bindValue(':last_log_id', $last_log_id, PDO::PARAM_INT);
             
             // Bind level filter values
             if ($level_filter && is_array($level_filter) && !empty($level_filter)) {
@@ -356,11 +368,12 @@ class Database {
                 $stmt->bindValue(':source', $source_filter, PDO::PARAM_STR);
             }
             
+            $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
             $stmt->execute();
             
             return $stmt->fetchAll();
         } catch (PDOException $e) {
-            error_log("Error fetching logs since timestamp: " . $e->getMessage());
+            error_log("Error fetching logs after ID: " . $e->getMessage());
             return [];
         }
     }

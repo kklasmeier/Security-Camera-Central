@@ -35,7 +35,8 @@ $prev_id = $db->get_previous_event_id($event_id);
 $next_id = $db->get_next_event_id($event_id);
 
 // Check if video is still processing - use mp4_conversion_status field
-$video_processing = ($event['mp4_conversion_status'] !== 'complete');
+// Accept both 'complete' (just converted) and 'optimized' (compressed) as ready states
+$video_processing = !in_array($event['mp4_conversion_status'], ['complete', 'optimized']);
 
 // Get URLs for media files
 $video_url = get_video_url($event);
@@ -175,7 +176,7 @@ include 'includes/header.php';
         <div class="detail-item">
             <span class="detail-label">Video:</span>
             <span class="detail-value">
-                <?php if ($event['mp4_conversion_status'] === 'complete' && !empty($event['video_mp4_path'])): ?>
+                <?php if (in_array($event['mp4_conversion_status'], ['complete', 'optimized']) && !empty($event['video_mp4_path'])): ?>
                     <?php echo basename($event['video_mp4_path']); ?>
                 <?php elseif ($event['mp4_conversion_status'] === 'processing'): ?>
                     <span class="transfer-badge transfer-processing">⏳ Processing</span>
@@ -221,6 +222,7 @@ include 'includes/header.php';
         </div>
     <?php elseif ($video_url): ?>
         <video 
+            id="event-video"
             class="event-video" 
             controls 
             autoplay 
@@ -451,6 +453,26 @@ document.addEventListener('DOMContentLoaded', function() {
             toggleButton.innerHTML = '<span class="toggle-icon">▲</span> Show less';
         }
         // If not expanded or no preference saved, it stays in default collapsed state
+    }
+    
+    // Video autoplay and speed control
+    const video = document.getElementById('event-video');
+    if (video) {
+        // Set playback speed to 2x
+        video.playbackRate = 2.0;
+        
+        // Ensure video plays (browsers may block autoplay without user interaction)
+        video.play().catch(function(error) {
+            console.log('Autoplay was prevented:', error);
+            // Autoplay blocked - video will wait for user interaction
+            // The controls are visible so user can click play
+        });
+        
+        // Preserve playback speed if user changes it
+        video.addEventListener('ratechange', function() {
+            // Optional: Save user's preferred speed to localStorage
+            // localStorage.setItem('videoPlaybackRate', video.playbackRate);
+        });
     }
 });
 </script>

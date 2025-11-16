@@ -5,4 +5,4 @@ on the central central server, i have two service agents that run as separate py
     1. conversion process of videos in the h264 format to mp4 using ffmpeg. 
     2. optimisation of .mp4 files to a smaller format.
 
-The central server detects motion events. when a motion event occurs, it takes 2 pictures, one picture when the event is detected and one picture 4 seconds later. it also takes about a 60 second video where ~30 seconds happens before the motion detection event occurs and ~30 seconds happens after.
+The central server detects motion events. when a motion event occurs, it takes 2 pictures, one picture when the event is detected and one picture 4 seconds later. it also takes about a 60 second video where ~30 seconds happens before the motion detection event occurs and ~30 seconds happens after.  

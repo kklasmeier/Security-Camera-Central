@@ -1,9 +1,113 @@
+########################################
+# PYTHON
+########################################
+
+# Bytecode caches
+**/__pycache__/
+*.py[cod]
+*$py.class
+api/__pycache__/
+api/__pycache__/*
+
+# C extensions
+*.so
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+########################################
+# PHP / WEB / NGINX
+########################################
+
+# PHP session/cache/temp files
+*.session
+*.cache
+*.tmp
+
+# Composer vendor directory (if used)
+vendor/
+
+# Node modules (in case you add JS later)
+node_modules/
+
+# Web logs
+www/logs/
+www/logs/*
+
+# Uploaded/temporary files
+www/uploads/
+www/uploads_tmp/
+
+########################################
+# PROJECT-SPECIFIC IGNORE PATTERNS
+########################################
+
+# AI outputs
+ai_output/
+ai_temp/
+
+# Camera agent & central server logs
+logs/
+logs/*
+scripts/logs/
+scripts/logs/*
+
+# Video/image temp storage
+security_footage/
+security_footage_tmp/
+
+# MP4 processing artifacts
+pending_mp4/
+tmp_frames/
+
+# Internal debug files
+debug/
+debug/*
+
+########################################
+# CONFIG / SECRETS
+########################################
+
+# Environment configs
 .env
-venv
-.vscode
-__pycache__
-api/__pycache__
-api/routes/__pycache__
-scripts/logs
-run_api.log
-scripts/venv
+.env.*
+*.local
+config_local.py
+
+# Sensitive DB configs
+www/includes/db.php.local
+www/includes/config_local.php
+
+########################################
+# EDITORS / IDEs
+########################################
+
+# VS Code
+.vscode/
+.code-workspace
+
+# JetBrains
+.idea/
+
+# vi/vim backup files
+*~
+*.bak
+*.orig
+
+########################################
+# GIT
+########################################
+
+# Ignore any merge conflict backup files
+*.rej
+*.orig
+

@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 
 from api.config import settings
 from api.database import check_database_connection
-from api.routes import health, cameras
+from api.routes import cameras, events, health, logs, stats
 
 # Configure unified logging for all loggers (including Uvicorn)
 LOGGING_CONFIG = {
@@ -105,7 +105,7 @@ app.include_router(events.router, prefix="/api/v1", tags=["Events"])
 # Include log routes
 from api.routes import logs
 app.include_router(logs.router, prefix="/api/v1", tags=["Logs"])
-
+app.include_router(stats.router, prefix="/api/v1", tags=["stats"]) 
 
 @app.get("/")
 def root():

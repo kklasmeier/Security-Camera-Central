@@ -57,6 +57,10 @@ CONCURRENCY = int(os.getenv("CONVERT_CONCURRENCY", "2"))
 BACKOFF_MIN_SECONDS = float(os.getenv("BACKOFF_MIN_SECONDS", "0.5"))
 BACKOFF_MAX_SECONDS = float(os.getenv("BACKOFF_MAX_SECONDS", "7"))
 
+# Stale claim recovery (reset events stuck in 'processing' for too long)
+STALE_CLAIM_MINUTES = int(os.getenv("STALE_CLAIM_MINUTES", "5"))
+STALE_CLAIM_CHECK_INTERVAL = int(os.getenv("STALE_CLAIM_CHECK_INTERVAL", "60"))  # Check every 60 seconds
+
 # Logging
 LOG_DIR = os.getenv("LOG_DIR", os.path.join(PROJECT_ROOT, "scripts", "logs"))
 LOGFILE = os.path.join(LOG_DIR, "mp4_conversion.log")
@@ -143,6 +147,17 @@ def path_join_media(relative_path: str) -> str:
 # CLAIM & FETCH
 # ======================================================================================
 
+# Recover stale claims (events stuck in 'processing' for more than 5 minutes)
+# Using TIMESTAMPDIFF to avoid SQLAlchemy bind parameter issues
+RECOVER_STALE_CLAIMS_SQL = text("""
+    UPDATE events
+    SET mp4_conversion_status = 'pending',
+        mp4_claimed_by = NULL,
+        mp4_claimed_at = NULL
+    WHERE mp4_conversion_status = 'processing'
+      AND TIMESTAMPDIFF(MINUTE, mp4_claimed_at, NOW(6)) > 5
+""")
+
 CLAIM_SQL = text("""
     UPDATE events
     SET mp4_conversion_status = 'processing',
@@ -173,6 +188,26 @@ FETCH_EVENT_SQL = text("""
     WHERE id = :event_id
     LIMIT 1
 """)
+
+RECOVER_STALE_CLAIMS_SQL = text("""
+    UPDATE events
+    SET mp4_conversion_status = 'pending',
+        mp4_claimed_by = NULL,
+        mp4_claimed_at = NULL
+    WHERE mp4_conversion_status = 'processing'
+      AND mp4_claimed_at < NOW(6) - INTERVAL :minutes MINUTE
+""")
+
+def recover_stale_claims(conn) -> int:
+    """
+    Reset any events stuck in 'processing' status for longer than STALE_CLAIM_MINUTES.
+    Returns the number of events recovered.
+    """
+    result = conn.execute(RECOVER_STALE_CLAIMS_SQL, {"minutes": STALE_CLAIM_MINUTES})
+    count = result.rowcount
+    if count > 0:
+        logger.log(f"[RECOVERY] Reset {count} stale claim(s) stuck in 'processing' for >{STALE_CLAIM_MINUTES} minutes")
+    return count
 
 def claim_one_event(conn) -> Optional[int]:
 
@@ -444,7 +479,11 @@ def process_event(event_id: int, engine: Engine):
 def run_daemon():
     logger.log("=== MP4 Converter: starting up ===")
     logger.log(f"Config: CONCURRENCY={CONCURRENCY}, BACKOFF=[{BACKOFF_MIN_SECONDS}..{BACKOFF_MAX_SECONDS}]s")
+    logger.log(f"Config: STALE_CLAIM_RECOVERY enabled (>{STALE_CLAIM_MINUTES} minutes, check every {STALE_CLAIM_CHECK_INTERVAL}s)")
     backoff = BACKOFF_MIN_SECONDS
+    
+    # Track last stale claim check time
+    last_stale_check = time.time()
 
     # ThreadPool for conversions
     with ThreadPoolExecutor(max_workers=CONCURRENCY, thread_name_prefix="mp4w") as pool:
@@ -455,6 +494,19 @@ def run_daemon():
         while not _stop_event.is_set():
             loop_iteration += 1
             logger.log(f"[LOOP-{loop_iteration}] Main loop iteration starting (backoff={backoff:.2f}s, running_tasks={len(running)})")
+            
+            # Periodically check for and recover stale claims
+            current_time = time.time()
+            if current_time - last_stale_check >= STALE_CLAIM_CHECK_INTERVAL:
+                logger.log(f"[LOOP-{loop_iteration}] Running stale claim recovery check")
+                try:
+                    with engine.begin() as conn:
+                        recover_stale_claims(conn)
+                    last_stale_check = current_time
+                except SQLAlchemyError as e:
+                    logger.log(f"[LOOP-{loop_iteration}] Stale claim recovery DB error: {e}")
+                except Exception as e:
+                    logger.log(f"[LOOP-{loop_iteration}] Stale claim recovery unexpected error: {e}")
             
             # Reap completed tasks quickly
             done_now = [f for f in running if f.done()]

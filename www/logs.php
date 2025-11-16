@@ -1,7 +1,7 @@
 <?php
 /**
  * Logs Page - System Log Viewer
- * Terminal-style display with filtering and AJAX "Get More" functionality
+ * Terminal-style display with filtering and AJAX "Get Newer Logs" functionality
  */
 
 require_once 'includes/session.php';
@@ -40,28 +40,16 @@ if ($filter_info) $level_filter[] = 'INFO';
 if ($filter_warning) $level_filter[] = 'WARNING';
 if ($filter_error) $level_filter[] = 'ERROR';
 
-// DEBUG - Remove this later
-echo "<!-- DEBUG: filter_info=$filter_info, filter_warning=$filter_warning, filter_error=$filter_error -->";
-echo "<!-- DEBUG: level_filter=" . implode(',', $level_filter) . " -->";
-echo "<!-- DEBUG: log count=" . count($logs ?? []) . " -->";
-
-// Get last 1000 logs with current filter
+// Get last 1000 logs with current filter (ordered ASC - oldest to newest)
 $logs = [];
 $no_filters_selected = empty($level_filter);
 
 if (!$no_filters_selected) {
-    $logs = $db->get_logs(1000, 0, $level_filter, 'DESC', $source_filter);
-    
-    // DEBUG
-    echo "<!-- DEBUG: After query, log count=" . count($logs) . " -->";
-    if (!empty($logs)) {
-        echo "<!-- DEBUG: First log level=" . $logs[0]['level'] . " -->";
-        echo "<!-- DEBUG: Last log level=" . $logs[count($logs)-1]['level'] . " -->";
-    }
+    $logs = $db->get_logs(1000, $level_filter, $source_filter);
 }
 
-// Get the most recent timestamp for "Get More" functionality
-$last_timestamp = !empty($logs) ? $logs[0]['timestamp'] : '';
+// Get the most recent log ID for "Get Newer Logs" functionality
+$last_log_id = !empty($logs) ? $logs[count($logs) - 1]['id'] : 0;
 
 // Page title
 $page_title = 'System Logs';
@@ -166,11 +154,14 @@ include 'includes/header.php';
             </table>
         </div>
         
-        <!-- Get More Button and Status -->
+        <!-- Get Newer Logs Button and Status -->
         <div class="logs-actions">
-            <button id="get-more-btn" class="btn btn-primary" onclick="getMoreLogs()">
-                Get More Logs
+            <button id="get-newer-btn" class="btn btn-primary" onclick="getNewerLogs()">
+                Get Newer Logs
             </button>
+            <span id="new-logs-badge" class="new-logs-badge" style="display: none;">
+                +<span id="new-logs-count">0</span> new
+            </span>
         </div>
         
         <div id="logs-status" class="logs-status">
@@ -178,23 +169,191 @@ include 'includes/header.php';
         </div>
         
         <!-- Hidden inputs for JavaScript -->
-        <input type="hidden" id="last-timestamp" value="<?php echo htmlspecialchars($last_timestamp); ?>">
+        <input type="hidden" id="last-log-id" value="<?php echo htmlspecialchars($last_log_id); ?>">
         <input type="hidden" id="filter-info" value="<?php echo $filter_info; ?>">
         <input type="hidden" id="filter-warning" value="<?php echo $filter_warning; ?>">
         <input type="hidden" id="filter-error" value="<?php echo $filter_error; ?>">
         <input type="hidden" id="filter-source" value="<?php echo htmlspecialchars($source_filter ?? ''); ?>">
+        <input type="hidden" id="show-source-column" value="<?php echo is_all_cameras_selected() ? '1' : '0'; ?>">
     <?php endif; ?>
 </div>
 
 <script>
-// Auto-scroll to bottom on page load
+// Auto-scroll to bottom on page load (showing newest logs)
 document.addEventListener('DOMContentLoaded', function() {
     const container = document.querySelector('.logs-container');
     if (container) {
         container.scrollTop = container.scrollHeight;
     }
 });
+
+/**
+ * Fetch newer logs via AJAX and append to bottom of table
+ */
+function getNewerLogs() {
+    const lastLogId = document.getElementById('last-log-id').value;
+    const filterInfo = document.getElementById('filter-info').value;
+    const filterWarning = document.getElementById('filter-warning').value;
+    const filterError = document.getElementById('filter-error').value;
+    const filterSource = document.getElementById('filter-source').value;
+    const showSourceColumn = document.getElementById('show-source-column').value === '1';
+    
+    const button = document.getElementById('get-newer-btn');
+    const badge = document.getElementById('new-logs-badge');
+    const statusDiv = document.getElementById('logs-status');
+    
+    // Disable button during fetch
+    button.disabled = true;
+    button.textContent = 'Loading...';
+    
+    // Prepare form data
+    const formData = new FormData();
+    formData.append('last_log_id', lastLogId);
+    formData.append('filter_info', filterInfo);
+    formData.append('filter_warning', filterWarning);
+    formData.append('filter_error', filterError);
+    formData.append('source_filter', filterSource);
+    
+    // Fetch newer logs
+    fetch('ajax/get_newer_logs.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const tbody = document.getElementById('logs-tbody');
+            const currentRowCount = tbody.children.length;
+            
+            if (data.count > 0) {
+                // Append new logs to bottom
+                data.logs.forEach(log => {
+                    const row = createLogRow(log, showSourceColumn);
+                    tbody.appendChild(row);
+                });
+                
+                // Update last log ID
+                document.getElementById('last-log-id').value = data.new_last_id;
+                
+                // Show badge with count
+                document.getElementById('new-logs-count').textContent = data.count;
+                badge.style.display = 'inline-block';
+                
+                // Update status
+                const newTotal = currentRowCount + data.count;
+                statusDiv.textContent = `Showing ${newTotal} logs (+${data.count} new)`;
+                
+                // Hide badge after 3 seconds
+                setTimeout(() => {
+                    badge.style.display = 'none';
+                }, 3000);
+            } else {
+                // No new logs
+                statusDiv.textContent = `Showing ${currentRowCount} logs (no new logs)`;
+            }
+        } else {
+            console.error('Error fetching logs:', data.error);
+            statusDiv.textContent = 'Error loading logs';
+        }
+    })
+    .catch(error => {
+        console.error('Fetch error:', error);
+        statusDiv.textContent = 'Error loading logs';
+    })
+    .finally(() => {
+        // Re-enable button
+        button.disabled = false;
+        button.textContent = 'Get Newer Logs';
+    });
+}
+
+/**
+ * Create a table row element for a log entry
+ */
+function createLogRow(log, showSourceColumn) {
+    const row = document.createElement('tr');
+    row.className = `log-row log-${log.level.toLowerCase()}`;
+    
+    // ID column
+    const idCell = document.createElement('td');
+    idCell.className = 'log-id';
+    idCell.textContent = log.id;
+    row.appendChild(idCell);
+    
+    // Source column (if showing all cameras)
+    if (showSourceColumn) {
+        const sourceCell = document.createElement('td');
+        sourceCell.className = 'log-source';
+        sourceCell.textContent = log.source;
+        row.appendChild(sourceCell);
+    }
+    
+    // Timestamp column
+    const timestampCell = document.createElement('td');
+    timestampCell.className = 'log-timestamp';
+    timestampCell.textContent = formatLogTimestamp(log.timestamp);
+    row.appendChild(timestampCell);
+    
+    // Level column
+    const levelCell = document.createElement('td');
+    levelCell.className = 'log-level';
+    const levelBadge = document.createElement('span');
+    levelBadge.className = `level-badge level-${log.level.toLowerCase()}`;
+    levelBadge.textContent = log.level;
+    levelCell.appendChild(levelBadge);
+    row.appendChild(levelCell);
+    
+    // Message column
+    const messageCell = document.createElement('td');
+    messageCell.className = 'log-message';
+    messageCell.textContent = log.message;
+    row.appendChild(messageCell);
+    
+    return row;
+}
+
+/**
+ * Format log timestamp for display
+ * This should match your PHP format_log_timestamp() function
+ */
+function formatLogTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
 </script>
+
+<style>
+/* Badge styling for new logs count */
+.new-logs-badge {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 4px 12px;
+    background-color: var(--color-success, #28a745);
+    color: white;
+    border-radius: 12px;
+    font-size: 0.875rem;
+    font-weight: 600;
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+</style>
 
 <?php
 // Include footer
