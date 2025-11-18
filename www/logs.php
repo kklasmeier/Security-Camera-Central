@@ -1,7 +1,7 @@
 <?php
 /**
  * Logs Page - System Log Viewer
- * Terminal-style display with filtering and AJAX "Get Newer Logs" functionality
+ * Terminal-style display with filtering, search, and AJAX "Get Newer Logs" functionality
  */
 
 require_once 'includes/session.php';
@@ -61,11 +61,33 @@ include 'includes/header.php';
 <div class="container">
     <h1 class="logs-title">System Logs</h1>
     
-    <!-- Combined Filter Section (Camera + Level Filters) -->
+    <!-- Combined Filter Section (Camera + Search + Level Filters) -->
     <div class="per-page-selector">
         <!-- Camera Selector (left side) - handles its own form submission -->
         <div class="camera-filter-section">
             <?php render_camera_selector('logs.php'); ?>
+        </div>
+        
+        <!-- Search Box (middle) -->
+        <div class="search-filter-section">
+            <div class="search-box-wrapper">
+                <input 
+                    type="text" 
+                    id="log-search-input" 
+                    class="log-search-input" 
+                    placeholder="Search logs..."
+                    autocomplete="off"
+                >
+                <button 
+                    id="clear-search-btn" 
+                    class="clear-search-btn" 
+                    style="display: none;"
+                    onclick="clearSearch()"
+                    title="Clear search"
+                >
+                    ×
+                </button>
+            </div>
         </div>
         
         <!-- Level Checkboxes (right side) - separate form -->
@@ -134,7 +156,7 @@ include 'includes/header.php';
                 </thead>
                 <tbody id="logs-tbody">
                     <?php foreach ($logs as $log): ?>
-                        <tr class="log-row log-<?php echo strtolower($log['level']); ?>">
+                        <tr class="log-row log-<?php echo strtolower($log['level']); ?>" data-log-id="<?php echo htmlspecialchars($log['id']); ?>">
                             <td class="log-id"><?php echo htmlspecialchars($log['id']); ?></td>
                             <?php if (is_all_cameras_selected()): ?>
                                 <td class="log-source"><?php echo htmlspecialchars($log['source']); ?></td>
@@ -179,13 +201,113 @@ include 'includes/header.php';
 </div>
 
 <script>
+// Global state
+let searchDebounceTimer = null;
+
 // Auto-scroll to bottom on page load (showing newest logs)
 document.addEventListener('DOMContentLoaded', function() {
     const container = document.querySelector('.logs-container');
     if (container) {
         container.scrollTop = container.scrollHeight;
     }
+    
+    // Set up search input listener
+    const searchInput = document.getElementById('log-search-input');
+    if (searchInput) {
+        searchInput.addEventListener('input', function() {
+            // Show/hide clear button
+            const clearBtn = document.getElementById('clear-search-btn');
+            if (clearBtn) {
+                clearBtn.style.display = this.value ? 'flex' : 'none';
+            }
+            
+            // Debounced search
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(function() {
+                filterLogsBySearch();
+            }, 300);
+        });
+        
+        // Allow Enter key to trigger immediate search
+        searchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                clearTimeout(searchDebounceTimer);
+                filterLogsBySearch();
+            }
+        });
+    }
 });
+
+/**
+ * Clear search input and show all logs
+ */
+function clearSearch() {
+    const searchInput = document.getElementById('log-search-input');
+    const clearBtn = document.getElementById('clear-search-btn');
+    
+    if (searchInput) {
+        searchInput.value = '';
+        searchInput.focus();
+    }
+    
+    if (clearBtn) {
+        clearBtn.style.display = 'none';
+    }
+    
+    filterLogsBySearch();
+}
+
+/**
+ * Filter visible log rows based on search input
+ * Searches across all fields: ID, Source, Timestamp, Level, Message
+ */
+function filterLogsBySearch() {
+    const searchInput = document.getElementById('log-search-input');
+    const searchTerm = searchInput ? searchInput.value.toLowerCase().trim() : '';
+    const tbody = document.getElementById('logs-tbody');
+    
+    if (!tbody) return;
+    
+    const rows = tbody.querySelectorAll('.log-row');
+    let visibleCount = 0;
+    const totalCount = rows.length;
+    
+    rows.forEach(row => {
+        if (searchTerm === '') {
+            // No search term - show all rows
+            row.style.display = '';
+            visibleCount++;
+        } else {
+            // Search across all text content in the row
+            const rowText = row.textContent.toLowerCase();
+            const matches = rowText.includes(searchTerm);
+            
+            row.style.display = matches ? '' : 'none';
+            if (matches) visibleCount++;
+        }
+    });
+    
+    // Update status message
+    updateLogsStatus(visibleCount, totalCount, searchTerm !== '');
+}
+
+/**
+ * Update the logs status message
+ */
+function updateLogsStatus(visibleCount, totalCount, hasSearch) {
+    const statusDiv = document.getElementById('logs-status');
+    if (!statusDiv) return;
+    
+    if (hasSearch) {
+        if (visibleCount === totalCount) {
+            statusDiv.textContent = `Showing ${totalCount} logs (all match search)`;
+        } else {
+            statusDiv.textContent = `Showing ${visibleCount} of ${totalCount} logs (${visibleCount} matching search)`;
+        }
+    } else {
+        statusDiv.textContent = `Showing ${totalCount} logs`;
+    }
+}
 
 /**
  * Fetch newer logs via AJAX and append to bottom of table
@@ -223,25 +345,36 @@ function getNewerLogs() {
     .then(data => {
         if (data.success) {
             const tbody = document.getElementById('logs-tbody');
-            const currentRowCount = tbody.children.length;
+            const currentRowCount = tbody.querySelectorAll('.log-row').length;
             
             if (data.count > 0) {
+                // Get current search term
+                const searchInput = document.getElementById('log-search-input');
+                const searchTerm = searchInput ? searchInput.value.toLowerCase().trim() : '';
+                
                 // Append new logs to bottom
+                let addedCount = 0;
                 data.logs.forEach(log => {
                     const row = createLogRow(log, showSourceColumn);
                     tbody.appendChild(row);
+                    addedCount++;
                 });
                 
                 // Update last log ID
                 document.getElementById('last-log-id').value = data.new_last_id;
                 
+                // Apply search filter to new rows if search is active
+                if (searchTerm) {
+                    filterLogsBySearch();
+                } else {
+                    // No search active - update status normally
+                    const newTotal = currentRowCount + addedCount;
+                    statusDiv.textContent = `Showing ${newTotal} logs (+${addedCount} new)`;
+                }
+                
                 // Show badge with count
                 document.getElementById('new-logs-count').textContent = data.count;
                 badge.style.display = 'inline-block';
-                
-                // Update status
-                const newTotal = currentRowCount + data.count;
-                statusDiv.textContent = `Showing ${newTotal} logs (+${data.count} new)`;
                 
                 // Hide badge after 3 seconds
                 setTimeout(() => {
@@ -249,7 +382,14 @@ function getNewerLogs() {
                 }, 3000);
             } else {
                 // No new logs
-                statusDiv.textContent = `Showing ${currentRowCount} logs (no new logs)`;
+                const allRows = tbody.querySelectorAll('.log-row');
+                const visibleRows = Array.from(allRows).filter(row => row.style.display !== 'none');
+                
+                if (visibleRows.length !== allRows.length) {
+                    statusDiv.textContent = `Showing ${visibleRows.length} of ${allRows.length} logs (no new logs)`;
+                } else {
+                    statusDiv.textContent = `Showing ${allRows.length} logs (no new logs)`;
+                }
             }
         } else {
             console.error('Error fetching logs:', data.error);
@@ -273,6 +413,7 @@ function getNewerLogs() {
 function createLogRow(log, showSourceColumn) {
     const row = document.createElement('tr');
     row.className = `log-row log-${log.level.toLowerCase()}`;
+    row.setAttribute('data-log-id', log.id);
     
     // ID column
     const idCell = document.createElement('td');
@@ -328,32 +469,6 @@ function formatLogTimestamp(timestamp) {
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 </script>
-
-<style>
-/* Badge styling for new logs count */
-.new-logs-badge {
-    display: inline-block;
-    margin-left: 10px;
-    padding: 4px 12px;
-    background-color: var(--color-success, #28a745);
-    color: white;
-    border-radius: 12px;
-    font-size: 0.875rem;
-    font-weight: 600;
-    animation: fadeIn 0.3s ease-in;
-}
-
-@keyframes fadeIn {
-    from {
-        opacity: 0;
-        transform: scale(0.8);
-    }
-    to {
-        opacity: 1;
-        transform: scale(1);
-    }
-}
-</style>
 
 <?php
 // Include footer

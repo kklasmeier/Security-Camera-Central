@@ -2132,7 +2132,112 @@ tbody tr:last-child td {
     }
 }
 
+/* Search Box Section - Middle of Filter Bar */
+.search-filter-section {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
 
+.search-box-wrapper {
+    position: relative;
+    width: 100%;
+    max-width: 400px;
+}
+
+.log-search-input {
+    width: 100%;
+    padding: var(--space-sm, 0.5rem) var(--space-md, 1rem);
+    padding-right: 36px; /* Space for clear button */
+    background: var(--color-bg-secondary, #1a1a1a);
+    border: 1px solid var(--color-border, #444);
+    border-radius: var(--border-radius, 8px);
+    color: var(--color-text-primary, #fff);
+    font-size: var(--font-size-base, 1rem);
+    font-family: inherit;
+    transition: all var(--transition-fast, 0.2s);
+    min-height: 44px;
+}
+
+.log-search-input::placeholder {
+    color: var(--color-text-muted, #666);
+}
+
+.log-search-input:hover {
+    border-color: var(--color-border-light, #666);
+}
+
+.log-search-input:focus {
+    outline: 2px solid var(--color-primary, #4a9eff);
+    outline-offset: 2px;
+    background: var(--color-bg-card, #2a2a2a);
+}
+
+.clear-search-btn {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--color-bg-tertiary, #333);
+    border: 1px solid var(--color-border, #444);
+    border-radius: 50%;
+    color: var(--color-text-secondary, #999);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    transition: all var(--transition-fast, 0.2s);
+    padding: 0;
+}
+
+.clear-search-btn:hover {
+    background: var(--color-bg-hover, #444);
+    color: var(--color-text-primary, #fff);
+    border-color: var(--color-border-light, #666);
+}
+
+.clear-search-btn:active {
+    transform: translateY(-50%) scale(0.95);
+}
+
+/* Mobile responsive adjustments for search */
+@media (max-width: 768px) {
+    .per-page-selector {
+        gap: var(--space-sm, 0.5rem);
+    }
+    
+    .search-filter-section {
+        order: 2; /* Move search to second position on mobile */
+        width: 100%;
+        margin-top: var(--space-sm, 0.5rem);
+        padding-top: var(--space-sm, 0.5rem);
+        border-top: 1px solid var(--color-border, #444);
+    }
+    
+    .camera-filter-section {
+        order: 1;
+    }
+    
+    .level-filters-form {
+        order: 3;
+    }
+    
+    .search-box-wrapper {
+        max-width: 100%;
+    }
+}
+
+@media (max-width: 480px) {
+    .log-search-input {
+        font-size: var(--font-size-sm, 0.875rem);
+        min-height: 40px;
+    }
+}
 
 /* ========================================
    LIVE VIEW HEADER WITH CAMERA SELECTOR
