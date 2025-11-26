@@ -297,6 +297,13 @@ class LogEntry(BaseModel):
         description="Log message content"
     )
     
+    @validator('message')
+    def validate_message(cls, v):
+        """Ensure message is not empty or whitespace-only"""
+        if not v or not v.strip():
+            raise ValueError('message cannot be empty or whitespace-only')
+        return v.strip()
+    
     @validator('timestamp', pre=True)
     def parse_timestamp(cls, v):
         """Parse timestamp string to datetime object"""

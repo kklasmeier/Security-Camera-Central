@@ -8,7 +8,7 @@ if (isset($_POST['camera'])) {
     $selected = $_POST['camera'];
     
     // Validate: must be a specific camera (not 'all')
-    if (in_array($selected, ['camera_1', 'camera_2', 'camera_3', 'camera_4'])) {
+    if ($selected !== 'all') {
         set_selected_camera($selected);
         // Redirect to prevent form resubmission
         header("Location: live.php");

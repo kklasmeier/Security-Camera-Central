@@ -5,7 +5,7 @@
  * 
  * Valid camera selections:
  * - 'all': Show all cameras (default)
- * - 'camera_1' through 'camera_4': Specific camera
+ * - Any camera_id that exists in the database (e.g., 'camera_1', 'camera_2', etc.)
  * 
  * Usage:
  *   require_once 'includes/session.php';  // Auto-initializes session
@@ -14,8 +14,59 @@
  *   if (is_all_cameras_selected()) {...}  // Check if viewing all
  */
 
-// Valid camera IDs
-define('VALID_CAMERAS', array('all', 'camera_1', 'camera_2', 'camera_3', 'camera_4'));
+// Cache valid camera IDs to avoid repeated database queries
+$_valid_cameras_cache = null;
+
+/**
+ * Get valid camera IDs from database
+ * Results are cached to avoid repeated queries within the same request
+ * 
+ * @return array Array of valid camera_id strings (e.g., ['camera_1', 'camera_2', ...])
+ */
+function get_valid_camera_ids() {
+    global $_valid_cameras_cache;
+    
+    // Return cached results if available
+    if ($_valid_cameras_cache !== null) {
+        return $_valid_cameras_cache;
+    }
+    
+    // Query database for all cameras
+    require_once __DIR__ . '/db.php';
+    $db = new Database();
+    $cameras = $db->get_all_cameras();
+    
+    // Extract camera_id values
+    $camera_ids = [];
+    foreach ($cameras as $camera) {
+        if (isset($camera['camera_id'])) {
+            $camera_ids[] = $camera['camera_id'];
+        }
+    }
+    
+    // Cache the results
+    $_valid_cameras_cache = $camera_ids;
+    
+    return $camera_ids;
+}
+
+/**
+ * Check if a camera ID is valid
+ * Valid IDs are: 'all' or any camera_id that exists in the database
+ * 
+ * @param string $camera_id Camera ID to validate
+ * @return bool True if valid, false otherwise
+ */
+function is_valid_camera_id($camera_id) {
+    // 'all' is always valid
+    if ($camera_id === 'all') {
+        return true;
+    }
+    
+    // Check against database cameras
+    $valid_ids = get_valid_camera_ids();
+    return in_array($camera_id, $valid_ids, true);
+}
 
 /**
  * Start PHP session if not already started
@@ -48,12 +99,12 @@ function session_start_if_needed() {
 /**
  * Get currently selected camera from session
  * 
- * @return string Camera ID ('all', 'camera_1', 'camera_2', 'camera_3', or 'camera_4')
+ * @return string Camera ID ('all' or valid camera_id from database)
  * 
  * Returns 'all' if:
  * - No selection exists in session
  * - Session value is null or empty
- * - Session value is invalid/corrupted
+ * - Session value is invalid/not in database
  * - Session couldn't be started (headers already sent)
  */
 function get_selected_camera() {
@@ -62,7 +113,7 @@ function get_selected_camera() {
     // Check if session is active and variable exists
     if (session_status() === PHP_SESSION_ACTIVE && 
         isset($_SESSION['selected_camera']) && 
-        in_array($_SESSION['selected_camera'], VALID_CAMERAS)) {
+        is_valid_camera_id($_SESSION['selected_camera'])) {
         return $_SESSION['selected_camera'];
     }
     
@@ -72,16 +123,16 @@ function get_selected_camera() {
 
 /**
  * Set selected camera in session
- * Validates input and defaults to 'all' for any invalid value
+ * Validates input against database and defaults to 'all' for any invalid value
  * 
- * @param string $camera_id Camera to select ('all', 'camera_1', etc.)
+ * @param string $camera_id Camera to select ('all' or valid camera_id from database)
  * @return void
  * 
  * Special case handling:
  * - null → 'all'
  * - empty string → 'all'
  * - non-string → 'all'
- * - invalid camera ID → 'all'
+ * - invalid camera ID (not in database) → 'all'
  * - session not started → silently fail
  */
 function set_selected_camera($camera_id) {
@@ -97,8 +148,8 @@ function set_selected_camera($camera_id) {
         $camera_id = 'all';
     }
     
-    // Validate against allowed values
-    if (!in_array($camera_id, VALID_CAMERAS)) {
+    // Validate against database cameras
+    if (!is_valid_camera_id($camera_id)) {
         $camera_id = 'all';
     }
     
@@ -132,7 +183,7 @@ function is_all_cameras_selected() {
  * Ensures:
  * - Session is started (if headers not sent)
  * - selected_camera is set to valid value
- * - Corrupted session values are reset to 'all'
+ * - Corrupted or deleted camera IDs are reset to 'all'
  */
 function initialize_session() {
     session_start_if_needed();
@@ -147,8 +198,8 @@ function initialize_session() {
         $_SESSION['selected_camera'] = 'all';
     }
     
-    // Validate existing value - reset if corrupted
-    if (!in_array($_SESSION['selected_camera'], VALID_CAMERAS)) {
+    // Validate existing value - reset if camera no longer exists in database
+    if (!is_valid_camera_id($_SESSION['selected_camera'])) {
         $_SESSION['selected_camera'] = 'all';
     }
 }
