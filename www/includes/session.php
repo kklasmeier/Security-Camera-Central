@@ -204,6 +204,186 @@ function initialize_session() {
     }
 }
 
+// ========================================
+// LOGS FILTER SESSION FUNCTIONS
+// ========================================
+
+/**
+ * Valid result limit options for logs
+ */
+function get_valid_log_limits() {
+    return [500, 1000, 2500, 5000, 10000, 25000];
+}
+
+/**
+ * Get logs filter expanded state
+ * @return bool
+ */
+function get_logs_filters_expanded() {
+    session_start_if_needed();
+    return isset($_SESSION['logs_filters_expanded']) ? (bool)$_SESSION['logs_filters_expanded'] : false;
+}
+
+/**
+ * Set logs filter expanded state
+ * @param bool $expanded
+ */
+function set_logs_filters_expanded($expanded) {
+    session_start_if_needed();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION['logs_filters_expanded'] = (bool)$expanded;
+    }
+}
+
+/**
+ * Get logs result limit
+ * @return int
+ */
+function get_logs_result_limit() {
+    session_start_if_needed();
+    $valid = get_valid_log_limits();
+    if (isset($_SESSION['logs_result_limit']) && in_array((int)$_SESSION['logs_result_limit'], $valid)) {
+        return (int)$_SESSION['logs_result_limit'];
+    }
+    return 1000; // default
+}
+
+/**
+ * Set logs result limit
+ * @param int $limit
+ */
+function set_logs_result_limit($limit) {
+    session_start_if_needed();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $valid = get_valid_log_limits();
+        $limit = (int)$limit;
+        if (in_array($limit, $valid)) {
+            $_SESSION['logs_result_limit'] = $limit;
+        }
+    }
+}
+
+/**
+ * Get logs date from filter
+ * @return string|null Date in Y-m-d format or null
+ */
+function get_logs_date_from() {
+    session_start_if_needed();
+    return isset($_SESSION['logs_date_from']) && $_SESSION['logs_date_from'] !== '' 
+        ? $_SESSION['logs_date_from'] : null;
+}
+
+/**
+ * Set logs date from filter
+ * @param string|null $date
+ */
+function set_logs_date_from($date) {
+    session_start_if_needed();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION['logs_date_from'] = $date !== '' ? $date : null;
+    }
+}
+
+/**
+ * Get logs time from filter (hour)
+ * @return int Hour 0-23
+ */
+function get_logs_time_from() {
+    session_start_if_needed();
+    if (isset($_SESSION['logs_time_from'])) {
+        $hour = (int)$_SESSION['logs_time_from'];
+        if ($hour >= 0 && $hour <= 23) {
+            return $hour;
+        }
+    }
+    return 0; // default midnight
+}
+
+/**
+ * Set logs time from filter (hour)
+ * @param int $hour
+ */
+function set_logs_time_from($hour) {
+    session_start_if_needed();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $hour = (int)$hour;
+        if ($hour >= 0 && $hour <= 23) {
+            $_SESSION['logs_time_from'] = $hour;
+        }
+    }
+}
+
+/**
+ * Get logs date to filter
+ * @return string|null Date in Y-m-d format or null
+ */
+function get_logs_date_to() {
+    session_start_if_needed();
+    return isset($_SESSION['logs_date_to']) && $_SESSION['logs_date_to'] !== '' 
+        ? $_SESSION['logs_date_to'] : null;
+}
+
+/**
+ * Set logs date to filter
+ * @param string|null $date
+ */
+function set_logs_date_to($date) {
+    session_start_if_needed();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION['logs_date_to'] = $date !== '' ? $date : null;
+    }
+}
+
+/**
+ * Get logs time to filter (hour)
+ * @return int Hour 0-23
+ */
+function get_logs_time_to() {
+    session_start_if_needed();
+    if (isset($_SESSION['logs_time_to'])) {
+        $hour = (int)$_SESSION['logs_time_to'];
+        if ($hour >= 0 && $hour <= 23) {
+            return $hour;
+        }
+    }
+    return 23; // default end of day
+}
+
+/**
+ * Set logs time to filter (hour)
+ * @param int $hour
+ */
+function set_logs_time_to($hour) {
+    session_start_if_needed();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $hour = (int)$hour;
+        if ($hour >= 0 && $hour <= 23) {
+            $_SESSION['logs_time_to'] = $hour;
+        }
+    }
+}
+
+/**
+ * Check if date filters are active
+ * @return bool
+ */
+function has_logs_date_filter() {
+    return get_logs_date_from() !== null || get_logs_date_to() !== null;
+}
+
+/**
+ * Clear logs date filters
+ */
+function clear_logs_date_filters() {
+    session_start_if_needed();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        $_SESSION['logs_date_from'] = null;
+        $_SESSION['logs_date_to'] = null;
+        $_SESSION['logs_time_from'] = 0;
+        $_SESSION['logs_time_to'] = 23;
+    }
+}
+
 // Auto-initialize session when file is included
 initialize_session();
 

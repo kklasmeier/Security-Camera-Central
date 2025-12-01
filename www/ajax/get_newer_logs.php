@@ -15,10 +15,17 @@ $filter_info = isset($_POST['filter_info']) ? (int)$_POST['filter_info'] : 0;
 $filter_warning = isset($_POST['filter_warning']) ? (int)$_POST['filter_warning'] : 0;
 $filter_error = isset($_POST['filter_error']) ? (int)$_POST['filter_error'] : 0;
 $source_filter = isset($_POST['source_filter']) ? $_POST['source_filter'] : null;
+$result_limit = isset($_POST['result_limit']) ? (int)$_POST['result_limit'] : 1000;
 
 // Convert empty string to null for source_filter
 if ($source_filter === '' || $source_filter === 'all') {
     $source_filter = null;
+}
+
+// Validate result limit
+$valid_limits = get_valid_log_limits();
+if (!in_array($result_limit, $valid_limits)) {
+    $result_limit = 1000;
 }
 
 // Build level filter array
@@ -45,9 +52,9 @@ if ($last_log_id <= 0) {
     exit;
 }
 
-// Get newer logs
+// Get newer logs (no end_datetime constraint - get all new logs)
 $db = new Database();
-$logs = $db->get_logs_after($last_log_id, 1000, $level_filter, $source_filter);
+$logs = $db->get_logs_after($last_log_id, $result_limit, $level_filter, $source_filter, null);
 
 // Return response
 echo json_encode([

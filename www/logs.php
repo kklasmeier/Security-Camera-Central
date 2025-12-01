@@ -14,13 +14,58 @@ handle_camera_selection();
 
 $db = new Database();
 
+// Build camera_id -> name lookup for source column display
+$cameras = $db->get_all_cameras();
+$camera_names = [];
+foreach ($cameras as $camera) {
+    $camera_names[$camera['camera_id']] = $camera['name'];
+}
+
 // Get selected camera for filtering logs
 $camera_id = get_selected_camera();
 
 // Map camera selection to log source filter
-// 'all' means show all sources (including 'central')
-// 'camera_1' means show only 'camera_1' logs
 $source_filter = ($camera_id === 'all') ? null : $camera_id;
+
+// Handle advanced filter form submission
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['apply_filters'])) {
+    // Save expanded state
+    set_logs_filters_expanded(true);
+    
+    // Save result limit
+    if (isset($_POST['result_limit'])) {
+        set_logs_result_limit((int)$_POST['result_limit']);
+    }
+    
+    // Save date filters
+    set_logs_date_from($_POST['date_from'] ?? null);
+    set_logs_date_to($_POST['date_to'] ?? null);
+    set_logs_time_from(isset($_POST['time_from']) ? (int)$_POST['time_from'] : 0);
+    set_logs_time_to(isset($_POST['time_to']) ? (int)$_POST['time_to'] : 23);
+    
+    // Redirect to prevent form resubmission
+    header('Location: logs.php?' . http_build_query($_GET));
+    exit;
+}
+
+// Handle clear dates
+if (isset($_GET['clear_dates'])) {
+    clear_logs_date_filters();
+    // Remove clear_dates from URL and redirect
+    $params = $_GET;
+    unset($params['clear_dates']);
+    header('Location: logs.php?' . http_build_query($params));
+    exit;
+}
+
+// Handle toggle expanded state via AJAX or GET
+if (isset($_GET['toggle_expanded'])) {
+    set_logs_filters_expanded(!get_logs_filters_expanded());
+    $params = $_GET;
+    unset($params['toggle_expanded']);
+    header('Location: logs.php?' . http_build_query($params));
+    exit;
+}
 
 // Parse filter parameters from URL
 $filter_info = isset($_GET['info']) ? 1 : 0;
@@ -40,13 +85,38 @@ if ($filter_info) $level_filter[] = 'INFO';
 if ($filter_warning) $level_filter[] = 'WARNING';
 if ($filter_error) $level_filter[] = 'ERROR';
 
-// Get last 1000 logs with current filter (ordered ASC - oldest to newest)
+// Get session-stored advanced filter values
+$filters_expanded = get_logs_filters_expanded();
+$result_limit = get_logs_result_limit();
+$date_from = get_logs_date_from();
+$date_to = get_logs_date_to();
+$time_from = get_logs_time_from();
+$time_to = get_logs_time_to();
+
+// Build datetime strings for query
+$start_datetime = null;
+$end_datetime = null;
+
+if ($date_from) {
+    $start_datetime = $date_from . ' ' . sprintf('%02d', $time_from) . ':00:00';
+}
+if ($date_to) {
+    $end_datetime = $date_to . ' ' . sprintf('%02d', $time_to) . ':59:59';
+}
+
+// Check if date filters are active (for UI indicator)
+$has_date_filter = has_logs_date_filter();
+
+// Get logs with current filters
 $logs = [];
 $no_filters_selected = empty($level_filter);
 
 if (!$no_filters_selected) {
-    $logs = $db->get_logs(1000, $level_filter, $source_filter);
+    $logs = $db->get_logs($result_limit, $level_filter, $source_filter, $start_datetime, $end_datetime);
 }
+
+// Check if we hit the limit
+$hit_limit = count($logs) >= $result_limit;
 
 // Get the most recent log ID for "Get Newer Logs" functionality
 $last_log_id = !empty($logs) ? $logs[count($logs) - 1]['id'] : 0;
@@ -127,7 +197,92 @@ include 'includes/header.php';
                 </label>
             </div>
         </form>
+        
+        <!-- Advanced Filters Toggle -->
+        <a href="?<?php echo http_build_query(array_merge($_GET, ['toggle_expanded' => 1])); ?>" 
+           class="advanced-filters-toggle <?php echo $has_date_filter ? 'has-active-filters' : ''; ?>"
+           title="Advanced Filters">
+            <span class="gear-icon">⚙</span>
+            <?php if ($has_date_filter): ?>
+                <span class="filter-indicator"></span>
+            <?php endif; ?>
+        </a>
     </div>
+    
+    <!-- Advanced Filters Panel (Collapsible) -->
+    <?php if ($filters_expanded): ?>
+    <div class="advanced-filters-panel">
+        <form method="post" action="logs.php?<?php echo http_build_query($_GET); ?>" class="advanced-filters-form">
+            <div class="advanced-filters-header">
+                <span>Advanced Filters</span>
+            </div>
+            
+            <div class="advanced-filters-content">
+                <!-- Row 1: Results Limit + Quick Presets -->
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label for="result_limit">Results:</label>
+                        <select name="result_limit" id="result_limit" class="filter-select">
+                            <?php foreach (get_valid_log_limits() as $limit_option): ?>
+                                <option value="<?php echo $limit_option; ?>" <?php echo $result_limit == $limit_option ? 'selected' : ''; ?>>
+                                    <?php echo number_format($limit_option); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    
+                    <div class="filter-group presets-group">
+                        <button type="button" class="preset-btn" onclick="setPreset('today')">Today</button>
+                        <button type="button" class="preset-btn" onclick="setPreset('yesterday')">Yesterday</button>
+                        <button type="button" class="preset-btn" onclick="setPreset('last7')">Last 7 Days</button>
+                        <button type="button" class="preset-btn" onclick="setPreset('last30')">Last 30 Days</button>
+                    </div>
+                </div>
+                
+                <!-- Row 2: Date Range -->
+                <div class="filter-row">
+                    <div class="filter-group date-range-group">
+                        <div class="date-input-group">
+                            <label for="date_from">From:</label>
+                            <input type="date" name="date_from" id="date_from" 
+                                   value="<?php echo htmlspecialchars($date_from ?? ''); ?>" 
+                                   class="filter-input">
+                            <select name="time_from" id="time_from" class="filter-select time-select">
+                                <?php for ($h = 0; $h < 24; $h++): ?>
+                                    <option value="<?php echo $h; ?>" <?php echo $time_from == $h ? 'selected' : ''; ?>>
+                                        <?php echo sprintf('%02d:00', $h); ?>
+                                    </option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
+                        
+                        <div class="date-input-group">
+                            <label for="date_to">To:</label>
+                            <input type="date" name="date_to" id="date_to" 
+                                   value="<?php echo htmlspecialchars($date_to ?? ''); ?>" 
+                                   class="filter-input">
+                            <select name="time_to" id="time_to" class="filter-select time-select">
+                                <?php for ($h = 0; $h < 24; $h++): ?>
+                                    <option value="<?php echo $h; ?>" <?php echo $time_to == $h ? 'selected' : ''; ?>>
+                                        <?php echo sprintf('%02d:59', $h); ?>
+                                    </option>
+                                <?php endfor; ?>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Row 3: Action Buttons -->
+                <div class="filter-row">
+                    <div class="filter-group actions-group">
+                        <button type="submit" name="apply_filters" value="1" class="btn btn-primary">Apply Filters</button>
+                        <a href="?<?php echo http_build_query(array_merge($_GET, ['clear_dates' => 1])); ?>" class="btn btn-secondary">Clear Dates</a>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+    <?php endif; ?>
     
     <?php if ($no_filters_selected): ?>
         <!-- No Filters Selected Message -->
@@ -159,10 +314,20 @@ include 'includes/header.php';
                         <tr class="log-row log-<?php echo strtolower($log['level']); ?>" data-log-id="<?php echo htmlspecialchars($log['id']); ?>">
                             <td class="log-id"><?php echo htmlspecialchars($log['id']); ?></td>
                             <?php if (is_all_cameras_selected()): ?>
-                                <td class="log-source"><?php echo htmlspecialchars($log['source']); ?></td>
+                                <td class="log-source"><?php 
+                                    $source_id = $log['source'];
+                                    $source_display = isset($camera_names[$source_id]) ? $camera_names[$source_id] : $source_id;
+                                    echo htmlspecialchars($source_display); 
+                                ?></td>
                             <?php endif; ?>
                             <td class="log-timestamp">
-                                <?php echo format_log_timestamp($log['timestamp']); ?>
+                                <?php 
+                                $ts = strtotime($log['timestamp']);
+                                $date_part = date('M j, Y', $ts);
+                                $time_part = date('g:i:s A', $ts);
+                                ?>
+                                <span class="ts-date"><?php echo $date_part; ?></span>
+                                <span class="ts-time"><?php echo $time_part; ?></span>
                             </td>
                             <td class="log-level">
                                 <span class="level-badge level-<?php echo strtolower($log['level']); ?>">
@@ -187,7 +352,18 @@ include 'includes/header.php';
         </div>
         
         <div id="logs-status" class="logs-status">
-            Showing <?php echo count($logs); ?> most recent logs
+            <?php
+            if ($has_date_filter) {
+                $from_display = $date_from ? date('M j', strtotime($date_from)) . ' ' . sprintf('%02d:00', $time_from) : 'beginning';
+                $to_display = $date_to ? date('M j', strtotime($date_to)) . ' ' . sprintf('%02d:59', $time_to) : 'now';
+                echo 'Showing ' . number_format(count($logs)) . ' logs from ' . $from_display . ' to ' . $to_display;
+                if ($hit_limit) {
+                    echo ' (limit reached)';
+                }
+            } else {
+                echo 'Showing ' . number_format(count($logs)) . ' most recent logs';
+            }
+            ?>
         </div>
         
         <!-- Hidden inputs for JavaScript -->
@@ -197,6 +373,8 @@ include 'includes/header.php';
         <input type="hidden" id="filter-error" value="<?php echo $filter_error; ?>">
         <input type="hidden" id="filter-source" value="<?php echo htmlspecialchars($source_filter ?? ''); ?>">
         <input type="hidden" id="show-source-column" value="<?php echo is_all_cameras_selected() ? '1' : '0'; ?>">
+        <input type="hidden" id="result-limit" value="<?php echo $result_limit; ?>">
+        <input type="hidden" id="camera-names" value="<?php echo htmlspecialchars(json_encode($camera_names)); ?>">
     <?php endif; ?>
 </div>
 
@@ -259,7 +437,6 @@ function clearSearch() {
 
 /**
  * Filter visible log rows based on search input
- * Searches across all fields: ID, Source, Timestamp, Level, Message
  */
 function filterLogsBySearch() {
     const searchInput = document.getElementById('log-search-input');
@@ -274,20 +451,16 @@ function filterLogsBySearch() {
     
     rows.forEach(row => {
         if (searchTerm === '') {
-            // No search term - show all rows
             row.style.display = '';
             visibleCount++;
         } else {
-            // Search across all text content in the row
             const rowText = row.textContent.toLowerCase();
             const matches = rowText.includes(searchTerm);
-            
             row.style.display = matches ? '' : 'none';
             if (matches) visibleCount++;
         }
     });
     
-    // Update status message
     updateLogsStatus(visibleCount, totalCount, searchTerm !== '');
 }
 
@@ -300,12 +473,12 @@ function updateLogsStatus(visibleCount, totalCount, hasSearch) {
     
     if (hasSearch) {
         if (visibleCount === totalCount) {
-            statusDiv.textContent = `Showing ${totalCount} logs (all match search)`;
+            statusDiv.textContent = `Showing ${totalCount.toLocaleString()} logs (all match search)`;
         } else {
-            statusDiv.textContent = `Showing ${visibleCount} of ${totalCount} logs (${visibleCount} matching search)`;
+            statusDiv.textContent = `Showing ${visibleCount.toLocaleString()} of ${totalCount.toLocaleString()} logs (${visibleCount.toLocaleString()} matching search)`;
         }
     } else {
-        statusDiv.textContent = `Showing ${totalCount} logs`;
+        statusDiv.textContent = `Showing ${totalCount.toLocaleString()} logs`;
     }
 }
 
@@ -319,6 +492,7 @@ function getNewerLogs() {
     const filterError = document.getElementById('filter-error').value;
     const filterSource = document.getElementById('filter-source').value;
     const showSourceColumn = document.getElementById('show-source-column').value === '1';
+    const resultLimit = document.getElementById('result-limit').value;
     
     const button = document.getElementById('get-newer-btn');
     const badge = document.getElementById('new-logs-badge');
@@ -335,6 +509,7 @@ function getNewerLogs() {
     formData.append('filter_warning', filterWarning);
     formData.append('filter_error', filterError);
     formData.append('source_filter', filterSource);
+    formData.append('result_limit', resultLimit);
     
     // Fetch newer logs
     fetch('ajax/get_newer_logs.php', {
@@ -348,47 +523,40 @@ function getNewerLogs() {
             const currentRowCount = tbody.querySelectorAll('.log-row').length;
             
             if (data.count > 0) {
-                // Get current search term
                 const searchInput = document.getElementById('log-search-input');
                 const searchTerm = searchInput ? searchInput.value.toLowerCase().trim() : '';
+                const cameraNames = JSON.parse(document.getElementById('camera-names').value || '{}');
                 
-                // Append new logs to bottom
                 let addedCount = 0;
                 data.logs.forEach(log => {
-                    const row = createLogRow(log, showSourceColumn);
+                    const row = createLogRow(log, showSourceColumn, cameraNames);
                     tbody.appendChild(row);
                     addedCount++;
                 });
                 
-                // Update last log ID
                 document.getElementById('last-log-id').value = data.new_last_id;
                 
-                // Apply search filter to new rows if search is active
                 if (searchTerm) {
                     filterLogsBySearch();
                 } else {
-                    // No search active - update status normally
                     const newTotal = currentRowCount + addedCount;
-                    statusDiv.textContent = `Showing ${newTotal} logs (+${addedCount} new)`;
+                    statusDiv.textContent = `Showing ${newTotal.toLocaleString()} logs (+${addedCount.toLocaleString()} new)`;
                 }
                 
-                // Show badge with count
                 document.getElementById('new-logs-count').textContent = data.count;
                 badge.style.display = 'inline-block';
                 
-                // Hide badge after 3 seconds
                 setTimeout(() => {
                     badge.style.display = 'none';
                 }, 3000);
             } else {
-                // No new logs
                 const allRows = tbody.querySelectorAll('.log-row');
                 const visibleRows = Array.from(allRows).filter(row => row.style.display !== 'none');
                 
                 if (visibleRows.length !== allRows.length) {
-                    statusDiv.textContent = `Showing ${visibleRows.length} of ${allRows.length} logs (no new logs)`;
+                    statusDiv.textContent = `Showing ${visibleRows.length.toLocaleString()} of ${allRows.length.toLocaleString()} logs (no new logs)`;
                 } else {
-                    statusDiv.textContent = `Showing ${allRows.length} logs (no new logs)`;
+                    statusDiv.textContent = `Showing ${allRows.length.toLocaleString()} logs (no new logs)`;
                 }
             }
         } else {
@@ -401,7 +569,6 @@ function getNewerLogs() {
         statusDiv.textContent = 'Error loading logs';
     })
     .finally(() => {
-        // Re-enable button
         button.disabled = false;
         button.textContent = 'Get Newer Logs';
     });
@@ -410,32 +577,38 @@ function getNewerLogs() {
 /**
  * Create a table row element for a log entry
  */
-function createLogRow(log, showSourceColumn) {
+function createLogRow(log, showSourceColumn, cameraNames) {
     const row = document.createElement('tr');
     row.className = `log-row log-${log.level.toLowerCase()}`;
     row.setAttribute('data-log-id', log.id);
     
-    // ID column
     const idCell = document.createElement('td');
     idCell.className = 'log-id';
     idCell.textContent = log.id;
     row.appendChild(idCell);
     
-    // Source column (if showing all cameras)
     if (showSourceColumn) {
         const sourceCell = document.createElement('td');
         sourceCell.className = 'log-source';
-        sourceCell.textContent = log.source;
+        // Use camera name if available, otherwise fall back to source ID
+        sourceCell.textContent = cameraNames[log.source] || log.source;
         row.appendChild(sourceCell);
     }
     
-    // Timestamp column
     const timestampCell = document.createElement('td');
     timestampCell.className = 'log-timestamp';
-    timestampCell.textContent = formatLogTimestamp(log.timestamp);
+    const ts = formatLogTimestamp(log.timestamp);
+    const dateSpan = document.createElement('span');
+    dateSpan.className = 'ts-date';
+    dateSpan.textContent = ts.date;
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'ts-time';
+    timeSpan.textContent = ts.time;
+    timestampCell.appendChild(dateSpan);
+    timestampCell.appendChild(document.createTextNode(' '));
+    timestampCell.appendChild(timeSpan);
     row.appendChild(timestampCell);
     
-    // Level column
     const levelCell = document.createElement('td');
     levelCell.className = 'log-level';
     const levelBadge = document.createElement('span');
@@ -444,7 +617,6 @@ function createLogRow(log, showSourceColumn) {
     levelCell.appendChild(levelBadge);
     row.appendChild(levelCell);
     
-    // Message column
     const messageCell = document.createElement('td');
     messageCell.className = 'log-message';
     messageCell.textContent = log.message;
@@ -454,23 +626,76 @@ function createLogRow(log, showSourceColumn) {
 }
 
 /**
- * Format log timestamp for display
- * This should match your PHP format_log_timestamp() function
+ * Format log timestamp for display - returns object with date and time parts
  */
 function formatLogTimestamp(timestamp) {
     const date = new Date(timestamp);
+    
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const month = months[date.getMonth()];
+    const day = date.getDate();
     const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
+    
+    let hours = date.getHours();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
     const minutes = String(date.getMinutes()).padStart(2, '0');
     const seconds = String(date.getSeconds()).padStart(2, '0');
     
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    return {
+        date: `${month} ${day}, ${year}`,
+        time: `${hours}:${minutes}:${seconds} ${ampm}`
+    };
+}
+
+/**
+ * Set date preset values
+ */
+function setPreset(preset) {
+    const dateFrom = document.getElementById('date_from');
+    const dateTo = document.getElementById('date_to');
+    const timeFrom = document.getElementById('time_from');
+    const timeTo = document.getElementById('time_to');
+    
+    const today = new Date();
+    const formatDate = (d) => d.toISOString().split('T')[0];
+    
+    switch (preset) {
+        case 'today':
+            dateFrom.value = formatDate(today);
+            dateTo.value = formatDate(today);
+            timeFrom.value = '0';
+            timeTo.value = '23';
+            break;
+        case 'yesterday':
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+            dateFrom.value = formatDate(yesterday);
+            dateTo.value = formatDate(yesterday);
+            timeFrom.value = '0';
+            timeTo.value = '23';
+            break;
+        case 'last7':
+            const last7 = new Date(today);
+            last7.setDate(last7.getDate() - 6);
+            dateFrom.value = formatDate(last7);
+            dateTo.value = formatDate(today);
+            timeFrom.value = '0';
+            timeTo.value = '23';
+            break;
+        case 'last30':
+            const last30 = new Date(today);
+            last30.setDate(last30.getDate() - 29);
+            dateFrom.value = formatDate(last30);
+            dateTo.value = formatDate(today);
+            timeFrom.value = '0';
+            timeTo.value = '23';
+            break;
+    }
 }
 </script>
 
 <?php
-// Include footer
 include 'includes/footer.php';
 ?>

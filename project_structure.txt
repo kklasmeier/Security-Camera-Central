@@ -1,0 +1,166 @@
+================================================================================
+Security Camera Agent - Project Inventory
+Generated: 2025-11-26 19:59:31
+Root Path: /home/pi/Security-Camera-Central
+================================================================================
+
+DIRECTORY STRUCTURE
+--------------------------------------------------------------------------------
+
+
+(root)/
+  .gitignore                                    1.6KB  2025-11-16 09:11:56
+  AI_INSTRUCTIONS.md                            1.4KB  2025-11-25 15:55:53
+  README.md                                      424B  2025-10-27 22:52:05
+
+api/
+  __init__.py                                     28B  2025-10-28 01:09:16
+  config.py                                     1.0KB  2025-10-28 08:14:14
+  database.py                                   1.9KB  2025-10-29 15:42:10
+  main.py                                       3.3KB  2025-11-16 01:03:57
+  models.py                                     3.9KB  2025-11-16 10:47:24
+
+api/routes/
+  __init__.py                                     52B  2025-10-28 20:02:24
+  cameras.py                                    4.2KB  2025-10-29 19:02:03
+  events.py                                    15.0KB  2025-11-16 10:47:49
+  health.py                                      912B  2025-10-29 16:29:37
+  logs.py                                       6.5KB  2025-11-07 18:41:18
+  stats.py                                      3.0KB  2025-11-16 01:00:57
+
+api/
+  schemas.py                                   13.5KB  2025-11-26 10:23:52
+
+(root)/
+  camera_health_check.py                        6.0KB  2025-11-15 11:22:49
+
+camera_nfs_mounts/
+  README.md                                    19.3KB  2025-10-28 00:26:32
+  add_camera.sh                                 5.8KB  2025-10-28 00:26:19
+  setup_nfs.sh                                  8.0KB  2025-10-28 00:25:00
+  test_nfs_mount.sh                             9.3KB  2025-10-28 00:26:02
+  verify_nfs.sh                                10.0KB  2025-10-28 00:25:40
+
+(root)/
+  central_server_controller.sh                  3.5KB  2025-11-10 18:36:14
+  check_db.py                                    199B  2025-10-28 08:08:07
+
+database/
+  001_add_status_to_events.sql                   853B  2025-11-06 13:11:55
+  002_add_claim_tracking_to_events.sql          1.0KB  2025-11-06 20:59:29
+  003_add_ai_fields.sql                          440B  2025-11-11 23:39:11
+  004_add_confidence_score.sql                   488B  2025-11-16 10:46:23
+  migration_fix_mp4_status.sql                  4.0KB  2025-10-28 19:33:43
+  schema.sql                                    6.7KB  2025-10-27 23:32:30
+  setup_database.sh                             5.5KB  2025-10-27 23:32:42
+  test_database.sql                            10.3KB  2025-10-27 23:33:31
+
+(root)/
+  emergency_diagnostic.py                      10.4KB  2025-11-15 11:21:34
+  gitsync.sh                                    4.5KB  2025-10-27 23:37:57
+  health_checker.py                            12.1KB  2025-11-15 11:22:10
+  killpython.sh                                 1.7KB  2025-11-06 13:43:37
+  project_inventory.py                          6.7KB  2025-11-26 18:06:33
+  project_structure.txt                            0B  2025-11-26 19:59:31
+  requirements.txt                               300B  2025-10-28 08:23:26
+  run_api.log                                   1.5MB  2025-11-10 19:27:14
+  run_api.sh                                    2.2KB  2025-10-28 14:28:28
+
+scripts/
+  AI_NOTES.md                                   1018B  2025-11-11 18:45:28
+  ai_event_processor.py                        15.6KB  2025-11-14 18:48:31
+  convert_pending_mp4.py                       25.1KB  2025-11-15 10:23:08
+  jobctl.sh                                     6.3KB  2025-11-13 17:22:18
+  optimize_mp4.py                               7.4KB  2025-11-07 00:02:02
+  requirements.txt                                86B  2025-11-11 23:23:43
+
+tests/
+  manual_test.sh                                2.6KB  2025-10-28 16:08:53
+  test_api.py                                   3.9KB  2025-10-28 01:11:37
+  test_camera_registration.py                   9.1KB  2025-10-28 15:52:02
+  test_event_creation.py                       10.5KB  2025-10-28 19:56:21
+  test_event_queries.py                        26.9KB  2025-11-07 18:41:11
+  test_file_updates.py                         14.1KB  2025-10-29 15:43:07
+  test_log_ingestion.py                        10.8KB  2025-10-29 16:30:24
+  test_logs_cameras_query.py                   22.1KB  2025-10-30 08:43:54
+
+(root)/
+  thread_monitor.py                             6.2KB  2025-11-15 11:22:26
+
+www/ajax/
+  get_newer_logs.php                            1.6KB  2025-11-14 22:08:00
+
+www/api/
+  get_new_logs.php                              1.2KB  2025-11-04 11:27:26
+  refresh_camera_status.php                      748B  2025-11-08 12:37:37
+  set_streaming.php                             3.3KB  2025-11-04 23:48:32
+
+www/assets/
+  camera-logo-small.png                        22.3KB  2025-10-19 21:24:23
+  camera-logo.png                              22.6KB  2025-10-19 21:24:22
+  camera.jpg                                  138.8KB  2025-10-19 21:22:28
+  favicon-16x16.png                              518B  2023-08-04 20:30:07
+  favicon-32x32.png                             1.1KB  2023-08-04 20:30:08
+  favicon.ico                                  15.0KB  2023-08-04 20:30:08
+  script.js                                    28.5KB  2025-11-08 12:42:56
+  style.css                                    53.7KB  2025-11-18 18:49:42
+
+www/
+  event.php                                    18.1KB  2025-11-16 14:12:16
+
+www/includes/
+  camera_selector.php                           1.7KB  2025-11-02 20:28:22
+  camera_status.php                             5.4KB  2025-11-08 19:09:01
+  config.php                                    2.4KB  2025-11-02 13:09:12
+  db.php                                       17.5KB  2025-11-19 10:18:13
+  debug_env.php                                 3.5KB  2025-11-02 13:07:56
+  footer.php                                    2.8KB  2025-11-16 19:10:52
+  functions.php                                13.5KB  2025-11-16 18:07:47
+  header.php                                    2.1KB  2025-11-07 17:00:59
+  session.php                                   5.7KB  2025-11-18 21:32:28
+  test_db.php                                  11.5KB  2025-11-02 13:03:59
+
+www/
+  index.php                                     9.5KB  2025-11-16 14:15:42
+  live.php                                      3.8KB  2025-11-19 11:35:46
+  logs.php                                     17.1KB  2025-11-18 18:50:05
+  test_camera_selector.php                      2.8KB  2025-11-02 20:28:49
+  test_cleanup_fixtures.sh                       445B  2025-11-02 16:36:23
+  test_functions.php                            5.9KB  2025-11-02 16:28:50
+  test_functions_create_fixtures.sh             2.7KB  2025-11-02 16:36:03
+  test_index_camera.php                         7.2KB  2025-11-02 20:41:19
+  test_session.php                              9.8KB  2025-11-02 20:13:32
+
+================================================================================
+SUMMARY
+--------------------------------------------------------------------------------
+Total Directories: 12
+Total Files: 87
+
+File Types:
+  .py                    28 files
+  .php                   22 files
+  .sh                    13 files
+  .sql                    7 files
+  .md                     4 files
+  .png                    4 files
+  .txt                    3 files
+  (no extension)          1 files
+  .log                    1 files
+  .jpg                    1 files
+  .ico                    1 files
+  .js                     1 files
+  .css                    1 files
+
+Total Size (tracked files): 2.28MB
+
+================================================================================
+KEY FILES DETECTED
+--------------------------------------------------------------------------------
+  README.md
+  requirements.txt
+  api/config.py
+  camera_nfs_mounts/README.md
+  scripts/requirements.txt
+
+================================================================================

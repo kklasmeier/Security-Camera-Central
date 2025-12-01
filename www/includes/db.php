@@ -229,9 +229,11 @@ class Database {
      * @param int $limit Number of logs to return
      * @param array|null $level_filter Array of log levels to filter (e.g., ['INFO', 'WARNING'])
      * @param string|null $source_filter Optional source/camera filter (e.g., 'camera_1' or 'all')
+     * @param string|null $start_datetime Optional start datetime (Y-m-d H:i:s)
+     * @param string|null $end_datetime Optional end datetime (Y-m-d H:i:s)
      * @return array Array of log records ordered by id ASC (oldest to newest)
      */
-    public function get_logs($limit = 1000, $level_filter = null, $source_filter = null) {
+    public function get_logs($limit = 1000, $level_filter = null, $source_filter = null, $start_datetime = null, $end_datetime = null) {
         if (!$this->isConnected()) return [];
         
         try {
@@ -251,6 +253,14 @@ class Database {
             // Handle source filter (camera_id)
             if ($source_filter !== null && $source_filter !== 'all') {
                 $where_conditions[] = "source = :source";
+            }
+            
+            // Handle date range filters
+            if ($start_datetime !== null) {
+                $where_conditions[] = "timestamp >= :start_datetime";
+            }
+            if ($end_datetime !== null) {
+                $where_conditions[] = "timestamp <= :end_datetime";
             }
             
             if (!empty($where_conditions)) {
@@ -280,6 +290,14 @@ class Database {
                 $stmt->bindValue(':source', $source_filter, PDO::PARAM_STR);
             }
             
+            // Bind date range filters
+            if ($start_datetime !== null) {
+                $stmt->bindValue(':start_datetime', $start_datetime, PDO::PARAM_STR);
+            }
+            if ($end_datetime !== null) {
+                $stmt->bindValue(':end_datetime', $end_datetime, PDO::PARAM_STR);
+            }
+            
             $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
             $stmt->execute();
             
@@ -294,9 +312,11 @@ class Database {
      * Get count of logs with optional filtering
      * @param array|null $level_filter Array of log levels to filter
      * @param string|null $source_filter Optional source/camera filter
+     * @param string|null $start_datetime Optional start datetime (Y-m-d H:i:s)
+     * @param string|null $end_datetime Optional end datetime (Y-m-d H:i:s)
      * @return int Total number of logs
      */
-    public function get_log_count($level_filter = null, $source_filter = null) {
+    public function get_log_count($level_filter = null, $source_filter = null, $start_datetime = null, $end_datetime = null) {
         if (!$this->isConnected()) return 0;
         
         try {
@@ -316,6 +336,14 @@ class Database {
                 $sql .= " AND source = :source";
             }
             
+            // Handle date range filters
+            if ($start_datetime !== null) {
+                $sql .= " AND timestamp >= :start_datetime";
+            }
+            if ($end_datetime !== null) {
+                $sql .= " AND timestamp <= :end_datetime";
+            }
+            
             $stmt = $this->pdo->prepare($sql);
             
             // Bind level filter values
@@ -328,6 +356,14 @@ class Database {
             // Bind source filter
             if ($source_filter !== null && $source_filter !== 'all') {
                 $stmt->bindValue(':source', $source_filter, PDO::PARAM_STR);
+            }
+            
+            // Bind date range filters
+            if ($start_datetime !== null) {
+                $stmt->bindValue(':start_datetime', $start_datetime, PDO::PARAM_STR);
+            }
+            if ($end_datetime !== null) {
+                $stmt->bindValue(':end_datetime', $end_datetime, PDO::PARAM_STR);
             }
             
             $stmt->execute();
@@ -347,9 +383,10 @@ class Database {
      * @param int $limit Number of logs to return (default 1000)
      * @param array|null $level_filter Array of log levels to filter
      * @param string|null $source_filter Optional source/camera filter
+     * @param string|null $end_datetime Optional end datetime constraint (Y-m-d H:i:s)
      * @return array Array of log records ordered by id ASC
      */
-    public function get_logs_after($last_log_id, $limit = 1000, $level_filter = null, $source_filter = null) {
+    public function get_logs_after($last_log_id, $limit = 1000, $level_filter = null, $source_filter = null, $end_datetime = null) {
         if (!$this->isConnected()) return [];
         
         try {
@@ -369,6 +406,11 @@ class Database {
                 $sql .= " AND source = :source";
             }
             
+            // Handle end datetime constraint (don't fetch logs beyond end date)
+            if ($end_datetime !== null) {
+                $sql .= " AND timestamp <= :end_datetime";
+            }
+            
             $sql .= " ORDER BY id ASC LIMIT :limit";
             
             $stmt = $this->pdo->prepare($sql);
@@ -384,6 +426,11 @@ class Database {
             // Bind source filter
             if ($source_filter !== null && $source_filter !== 'all') {
                 $stmt->bindValue(':source', $source_filter, PDO::PARAM_STR);
+            }
+            
+            // Bind end datetime
+            if ($end_datetime !== null) {
+                $stmt->bindValue(':end_datetime', $end_datetime, PDO::PARAM_STR);
             }
             
             $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
